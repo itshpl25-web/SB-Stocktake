@@ -139,9 +139,14 @@
   <!-- ═══════════ SESSIONS ═══════════ -->
   <div class="section-panel" id="section-sessions">
     <div class="card">
-      <h2>📋 Gondola Sessions</h2>
+      <h2>📊 Gondola Status Overview</h2>
       <label>Department (filter)</label>
       <select id="session-dept-filter"><option value="">All departments</option></select>
+      <div class="table-scroll"><table class="data-table" id="status-overview-table"></table></div>
+    </div>
+
+    <div class="card">
+      <h2>📋 Load a Report</h2>
       <label>Session</label>
       <select id="session-select"><option>Loading...</option></select>
       <button class="btn btn-admin" onclick="loadCountSheet()">Load Zone Count Report</button>
@@ -232,9 +237,13 @@ function initAdminPanel() {
     // populateDeptSelect always adds a "Select department..." first option — for a filter, "All departments" reads better
     document.getElementById("session-dept-filter").options[0].text = "All departments";
   });
-  document.getElementById("session-dept-filter").addEventListener("change", loadSessionsList);
+  document.getElementById("session-dept-filter").addEventListener("change", function() {
+    loadSessionsList();
+    loadStatusOverview();
+  });
   document.getElementById("sap-count-date").valueAsDate = new Date();
   loadSessionsList();
+  loadStatusOverview();
 }
 
 // ── NAV ────────────────────────────────────────────
@@ -476,6 +485,35 @@ async function loadReconciliation() {
 // ═══════════════════════════════════════════════════
 // SESSIONS / COUNT SHEET (Zone Count Report)
 // ═══════════════════════════════════════════════════
+async function loadStatusOverview() {
+  const deptFilter = document.getElementById("session-dept-filter").value;
+
+  let query = sb.from("session_summary").select("*").order("started_at", { ascending: false }).limit(100);
+  if (deptFilter) query = query.eq("department_id", deptFilter);
+
+  const { data, error } = await query;
+  const table = document.getElementById("status-overview-table");
+
+  if (error || !data || data.length === 0) {
+    table.innerHTML = "<tr><td style='padding:10px;color:#999'>No sessions yet.</td></tr>";
+    return;
+  }
+
+  const now = new Date();
+  table.innerHTML = "<tr><th>Gondola</th><th>Department</th><th>Staff</th><th>Status</th><th>Items</th><th>Started</th></tr>" +
+    data.map(function(s) {
+      const statusText = s.status.replace("_", " ").toUpperCase();
+      const hoursOpen = (now - new Date(s.started_at)) / (1000 * 60 * 60);
+      // Flag a session that's been "in progress" for a long time — likely abandoned/forgotten, not a real 6+ hour count
+      const stale = s.status === "in_progress" && hoursOpen > 6;
+      const statusCell = stale
+        ? "<span style='color:#e53935;font-weight:bold'>" + statusText + " ⚠️ " + Math.floor(hoursOpen) + "h open</span>"
+        : statusText;
+      return "<tr><td>" + s.gondola_id + "</td><td>" + s.department + "</td><td>" + (s.staff_name || "") + "</td><td>" +
+        statusCell + "</td><td>" + s.item_count + "</td><td>" + new Date(s.started_at).toLocaleString() + "</td></tr>";
+    }).join("");
+}
+
 async function loadSessionsList() {
   const deptFilter = document.getElementById("session-dept-filter").value;
 
@@ -493,7 +531,7 @@ async function loadSessionsList() {
   if (error || !data || data.length === 0) { sel.innerHTML = '<option value="">No sessions found</option>'; return; }
   sel.innerHTML = data.map(s =>
     '<option value="' + s.id + '">' + s.gondola_id + " — " + (s.departments ? s.departments.name : "?") +
-    " (" + s.status + ", " + s.staff_name + ")</option>"
+    " (" + s.status.replace("_", " ").toUpperCase() + ", " + s.staff_name + ")</option>"
   ).join("");
 }
 
