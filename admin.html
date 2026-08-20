@@ -104,16 +104,16 @@
     </div>
 
     <div class="card">
-      <h2>📥 Upload SAP Physical Inventory Data</h2>
-      <p style="color:#666; font-size:13px; margin-bottom:16px">Replaces existing SAP data for the selected department.</p>
+      <h2>📥 Upload MI24 Physical Inventory Data</h2>
+      <p style="color:#666; font-size:13px; margin-bottom:16px">Replaces existing MI24 data for the selected department.</p>
       <label>Department</label>
-      <select id="sap-dept-select"><option>Loading...</option></select>
+      <select id="sap-dept-select"><option>Loading...(blub blub blub...)</option></select>
       <label>Count Date (applies to every row)</label>
       <input type="date" id="sap-count-date"/>
-      <div class="drop-zone" onclick="document.getElementById('sap-file-input').click()">📄 Click to select SAP export Excel file</div>
+      <div class="drop-zone" onclick="document.getElementById('sap-file-input').click()">📄 Click to select MI24 export Excel file</div>
       <input type="file" id="sap-file-input" accept=".xlsx,.xls" style="display:none"/>
       <div id="sap-preview-info" style="font-size:13px;color:#666;margin-bottom:10px"></div>
-      <button id="btn-sap-upload" class="btn btn-admin" onclick="startSapImport()" disabled>⬆ Replace SAP Data</button>
+      <button id="btn-sap-upload" class="btn btn-admin" onclick="startSapImport()" disabled>⬆ Replace MI24 Data</button>
       <div id="sap-log"></div>
     </div>
 
@@ -130,8 +130,8 @@
       <div class="table-scroll"><table class="data-table" id="recon-table"></table></div>
     </div>
     <div class="card">
-      <h2>⚠️ Unmatched Scans</h2>
-      <p style="color:#666; font-size:13px; margin-bottom:10px">Items scanned that don't appear in the uploaded SAP book list for this department.</p>
+      <h2>⚠️ Missing Material in PID</h2>
+      <p style="color:#666; font-size:13px; margin-bottom:10px">Items scanned that don't appear in the uploaded MI24 for this department.</p>
       <div class="table-scroll"><table class="data-table" id="unmatched-table"></table></div>
     </div>
   </div>
@@ -142,7 +142,7 @@
       <h2>📋 Gondola Sessions</h2>
       <label>Session</label>
       <select id="session-select"><option>Loading...</option></select>
-      <button class="btn btn-admin" onclick="loadCountSheet()">Load Count Sheet</button>
+      <button class="btn btn-admin" onclick="loadCountSheet()">Load Zone Count Report</button>
       <button class="btn btn-gray" onclick="window.print()">🖨️ Print</button>
       <div id="session-log"></div>
     </div>
@@ -151,7 +151,7 @@
   <!-- ═══════════ EXPORT ═══════════ -->
   <div class="section-panel" id="section-export">
     <div class="card">
-      <h2>📤 Export for SAP</h2>
+      <h2>📤 Export to upload for SAP</h2>
       <label>Department</label>
       <select id="export-dept-select"><option>Loading...</option></select>
       <button class="btn btn-admin" onclick="previewExport()">Preview Summary</button>
