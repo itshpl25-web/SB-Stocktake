@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>StockTake Admin</title>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #f0f2f5; color: #1a1a1a; min-height: 100vh; }
+    .header { background: #e53935; color: white; padding: 16px 20px; font-size: 18px; font-weight: bold; display: flex; align-items: center; gap: 10px; }
+    .container { max-width: 700px; margin: 40px auto; padding: 20px; }
+    .card { background: white; border-radius: 12px; padding: 24px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .card h2 { font-size: 16px; color: #444; margin-bottom: 16px; }
+    input[type="text"], input[type="password"], input[type="number"], input[type="date"], select {
+      width: 100%; padding: 12px 14px; border: 1.5px solid #ddd; border-radius: 8px; font-size: 16px; margin-bottom: 12px; outline: none;
+    }
+    input:focus, select:focus { border-color: #e53935; }
+    .btn { width: 100%; padding: 14px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-bottom: 10px; transition: opacity 0.2s; }
+    .btn:active { opacity: 0.8; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-admin { background: #e53935; color: white; }
+    .btn-gray { background: #e0e0e0; color: #444; }
+    .drop-zone { border: 2px dashed #ddd; border-radius: 12px; padding: 30px 20px; text-align: center; cursor: pointer; transition: all 0.2s; margin-bottom: 16px; background: #fafafa; }
+    .drop-zone:hover { border-color: #e53935; background: #fff5f5; }
+    .drop-zone .filename { color: #e53935; font-weight: bold; margin-top: 8px; font-size: 15px; }
+    .status { text-align: center; padding: 12px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; display: none; }
+    .status.visible { display: block; }
+    .status.loading { background: #fff3cd; color: #856404; }
+    .status.success { background: #d4edda; color: #155724; }
+    .status.error { background: #f8d7da; color: #721c24; }
+    .hidden { display: none; }
+    .pin-screen { max-width: 320px; margin: 80px auto; }
+    .badge { display: inline-block; background: #fff3cd; color: #856404; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; margin-bottom: 16px; }
+    #log { background: #f0f2f5; padding: 14px; border-radius: 8px; margin-top: 16px; white-space: pre-wrap; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; }
+    .ok { color: #155724; }
+    .err { color: #721c24; }
+    .summary-box { background: #fff3cd; padding: 12px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
+
+    .nav-tabs { display: flex; gap: 6px; margin-bottom: 16px; overflow-x: auto; }
+    .nav-tab { flex-shrink: 0; padding: 10px 16px; border-radius: 20px; border: none; background: white; color: #444; font-size: 13px; font-weight: bold; cursor: pointer; }
+    .nav-tab.active { background: #e53935; color: white; }
+    .section-panel { display: none; }
+    .section-panel.active { display: block; }
+
+    table.data-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 12px; }
+    table.data-table th { background: #e53935; color: white; padding: 6px 8px; text-align: left; position: sticky; top: 0; }
+    table.data-table td { padding: 5px 8px; border-bottom: 1px solid #f0f0f0; }
+    table.data-table tr:nth-child(even) td { background: #fafafa; }
+    .table-scroll { max-height: 400px; overflow-y: auto; overflow-x: auto; }
+
+    #print-sheet { display: none; }
+    @media print {
+      body * { visibility: hidden; }
+      #print-sheet, #print-sheet * { visibility: visible; }
+      #print-sheet { display: block !important; position: absolute; top: 0; left: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="header"><span>🔧</span><span>StockTake Admin</span></div>
+
+<!-- PIN Screen -->
+<div class="container" id="pin-screen">
+  <div class="pin-screen">
+    <div class="card">
+      <h2>🔒 Admin Access</h2>
+      <p style="color:#666; font-size:14px; margin-bottom:16px">Enter your PIN to continue.</p>
+      <input type="password" id="pin-input" placeholder="Enter PIN..." maxlength="10" onkeydown="if(event.key==='Enter') checkPin()"/>
+      <button class="btn btn-admin" onclick="checkPin()">Unlock</button>
+      <div class="status" id="pin-status"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Admin Panel -->
+<div class="container hidden" id="admin-panel">
+  <div class="badge">⚠️ Admin only — do not share this URL</div>
+
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="showSection('uploads')">📂 Uploads</button>
+    <button class="nav-tab" onclick="showSection('reconciliation')">📊 Reconciliation</button>
+    <button class="nav-tab" onclick="showSection('sessions')">📋 Sessions</button>
+    <button class="nav-tab" onclick="showSection('export')">📤 Export</button>
+  </div>
+
+  <!-- ═══════════ UPLOADS ═══════════ -->
+  <div class="section-panel active" id="section-uploads">
+
+    <div class="card">
+      <h2>📋 Update MASTER LIST</h2>
+      <p style="color:#666; font-size:13px; margin-bottom:16px">Upload the SAP material master export for one department. Existing barcodes update in place, new ones are added.</p>
+      <label>Department</label>
+      <select id="master-dept-select"><option>Loading...</option></select>
+      <input type="text" id="master-dept-new" placeholder="New department name..." style="display:none;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()"/>
+      <div class="drop-zone" onclick="document.getElementById('master-file-input').click()">📄 Click to select MASTER LIST Excel file</div>
+      <input type="file" id="master-file-input" accept=".xlsx,.xls" style="display:none"/>
+      <div id="master-preview-info" style="font-size:13px;color:#666;margin-bottom:10px"></div>
+      <button id="btn-master-upload" class="btn btn-admin" onclick="startMasterImport()" disabled>⬆ Update MASTER LIST</button>
+      <div id="master-log"></div>
+    </div>
+
+    <div class="card">
+      <h2>📥 Upload SAP Physical Inventory Data</h2>
+      <p style="color:#666; font-size:13px; margin-bottom:16px">Replaces existing SAP data for the selected department.</p>
+      <label>Department</label>
+      <select id="sap-dept-select"><option>Loading...</option></select>
+      <label>Count Date (applies to every row)</label>
+      <input type="date" id="sap-count-date"/>
+      <div class="drop-zone" onclick="document.getElementById('sap-file-input').click()">📄 Click to select SAP export Excel file</div>
+      <input type="file" id="sap-file-input" accept=".xlsx,.xls" style="display:none"/>
+      <div id="sap-preview-info" style="font-size:13px;color:#666;margin-bottom:10px"></div>
+      <button id="btn-sap-upload" class="btn btn-admin" onclick="startSapImport()" disabled>⬆ Replace SAP Data</button>
+      <div id="sap-log"></div>
+    </div>
+
+  </div>
+
+  <!-- ═══════════ RECONCILIATION ═══════════ -->
+  <div class="section-panel" id="section-reconciliation">
+    <div class="card">
+      <h2>📊 Live Reconciliation Report</h2>
+      <label>Department</label>
+      <select id="recon-dept-select"><option>Loading...</option></select>
+      <button class="btn btn-admin" onclick="loadReconciliation()">Load Report</button>
+      <div id="recon-summary" class="summary-box hidden"></div>
+      <div class="table-scroll"><table class="data-table" id="recon-table"></table></div>
+    </div>
+    <div class="card">
+      <h2>⚠️ Unmatched Scans</h2>
+      <p style="color:#666; font-size:13px; margin-bottom:10px">Items scanned that don't appear in the uploaded SAP book list for this department.</p>
+      <div class="table-scroll"><table class="data-table" id="unmatched-table"></table></div>
+    </div>
+  </div>
+
+  <!-- ═══════════ SESSIONS ═══════════ -->
+  <div class="section-panel" id="section-sessions">
+    <div class="card">
+      <h2>📋 Gondola Sessions</h2>
+      <label>Session</label>
+      <select id="session-select"><option>Loading...</option></select>
+      <button class="btn btn-admin" onclick="loadCountSheet()">Load Count Sheet</button>
+      <button class="btn btn-gray" onclick="window.print()">🖨️ Print</button>
+      <div id="session-log"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════ EXPORT ═══════════ -->
+  <div class="section-panel" id="section-export">
+    <div class="card">
+      <h2>📤 Export for SAP</h2>
+      <label>Department</label>
+      <select id="export-dept-select"><option>Loading...</option></select>
+      <button class="btn btn-admin" onclick="previewExport()">Preview Summary</button>
+      <div id="export-summary" class="summary-box hidden"></div>
+      <button id="btn-export-download" class="btn btn-admin" onclick="downloadExport()" disabled>⬇ Download .xlsx for SAP</button>
+      <div id="export-log"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Printable count sheet (hidden except when printing) -->
+<div id="print-sheet">
+  <h2>Zone Count Report</h2>
+  <div style="font-size:14px;margin-bottom:16px">
+    <div><b>Department:</b> <span id="ps-dept"></span> &nbsp; <b>Gondola:</b> <span id="ps-gondola"></span></div>
+    <div><b>Staff:</b> <span id="ps-staff"></span> &nbsp; <b>Status:</b> <span id="ps-status"></span></div>
+    <div><b>Printed:</b> <span id="ps-printed"></span></div>
+  </div>
+  <table style="width:100%;border-collapse:collapse;font-size:14px">
+    <thead><tr>
+      <th style="border:1px solid #999;padding:8px;background:#eee;text-align:left">Material</th>
+      <th style="border:1px solid #999;padding:8px;background:#eee;text-align:left">Description</th>
+      <th style="border:1px solid #999;padding:8px;background:#eee;text-align:left">UOM</th>
+      <th style="border:1px solid #999;padding:8px;background:#eee;text-align:right">Qty Counted</th>
+    </tr></thead>
+    <tbody id="ps-body"></tbody>
+  </table>
+</div>
+
+<script>
+const API_URL_UNUSED = null; // legacy Apps Script URL no longer used
+const SUPABASE_URL = "https://fcigsdjzyyrhxjfuyilc.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_Rc_eDYds1FWvEwM6kpujZA_LNjgUlbP";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const ADMIN_PIN = "8888"; // ← change this to your preferred PIN
+
+// ── PIN CHECK ─────────────────────────────────────
+function checkPin() {
+  var pin = document.getElementById("pin-input").value.trim();
+  var statusEl = document.getElementById("pin-status");
+  if (pin === ADMIN_PIN) {
+    document.getElementById("pin-screen").classList.add("hidden");
+    document.getElementById("admin-panel").classList.remove("hidden");
+    initAdminPanel();
+  } else {
+    statusEl.className = "status visible error";
+    statusEl.textContent = "❌ Incorrect PIN. Try again.";
+    document.getElementById("pin-input").value = "";
+  }
+}
+
+function initAdminPanel() {
+  populateDeptSelect("master-dept-select", true);
+  populateDeptSelect("sap-dept-select", false);
+  populateDeptSelect("recon-dept-select", false);
+  populateDeptSelect("export-dept-select", false);
+  document.getElementById("sap-count-date").valueAsDate = new Date();
+  loadSessionsList();
+}
+
+// ── NAV ────────────────────────────────────────────
+function showSection(name) {
+  document.querySelectorAll(".nav-tab").forEach(function(t) { t.classList.remove("active"); });
+  document.querySelectorAll(".section-panel").forEach(function(p) { p.classList.remove("active"); });
+  event.target.classList.add("active");
+  document.getElementById("section-" + name).classList.add("active");
+}
+
+// ── SHARED HELPERS ─────────────────────────────────
+async function populateDeptSelect(id, includeAddNew) {
+  const { data } = await sb.from("departments").select("id, name").order("name");
+  const sel = document.getElementById(id);
+  let options = '<option value="">Select department...</option>';
+  if (data) options += data.map(d => '<option value="' + d.id + '">' + d.name + '</option>').join("");
+  if (includeAddNew) options += '<option value="__new__">+ Add new department...</option>';
+  sel.innerHTML = options;
+}
+
+function logTo(elId, msg, type) {
+  const el = document.getElementById(elId);
+  const cls = type ? " " + type : "";
+  el.innerHTML += '<div class="' + cls.trim() + '">' + msg + "</div>";
+  el.scrollTop = el.scrollHeight;
+}
+
+// ═══════════════════════════════════════════════════
+// MASTER LIST UPLOAD
+// ═══════════════════════════════════════════════════
+const MASTER_COL_INDICES = [2, 3, 37, 7, 8, 4];
+let extractedMasterRows = [];
+
+document.getElementById("master-dept-select").addEventListener("change", function() {
+  document.getElementById("master-dept-new").style.display = this.value === "__new__" ? "block" : "none";
+});
+document.getElementById("master-file-input").addEventListener("change", function(e) {
+  if (e.target.files[0]) handleMasterFile(e.target.files[0]);
+});
+
+function normalizeBarcode(raw) {
+  const num = Number(raw);
+  return num ? num.toFixed(0) : (raw || "").toString().trim();
+}
+
+function handleMasterFile(file) {
+  logTo("master-log", "Reading " + file.name + "...");
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const data = new Uint8Array(e.target.result);
+    const workbook = XLSX.read(data, { type: "array" });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const allRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false });
+    if (allRows.length < 2) { logTo("master-log", "❌ File appears empty.", "err"); return; }
+
+    const seen = {};
+    for (let i = 1; i < allRows.length; i++) {
+      const row = allRows[i];
+      const material = row[2];
+      const barcode = normalizeBarcode(row[4]);
+      if (!material && !barcode) continue;
+      if (!barcode) continue;
+      seen[barcode] = {
+        barcode: barcode,
+        material: (row[2] || "").toString().trim(),
+        description: (row[3] || "").toString().trim(),
+        material_group: (row[37] || "").toString().trim(),
+        uom: (row[7] || "").toString().trim(),
+        numerator: Number(row[8]) || 1
+      };
+    }
+    extractedMasterRows = Object.values(seen);
+    document.getElementById("master-preview-info").textContent = extractedMasterRows.length + " rows ready.";
+    logTo("master-log", "✅ Parsed " + extractedMasterRows.length + " unique-barcode rows.", "ok");
+    document.getElementById("btn-master-upload").disabled = false;
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function startMasterImport() {
+  const btn = document.getElementById("btn-master-upload");
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = "Uploading...";
+  function reset() { btn.disabled = false; btn.textContent = "⬆ Update MASTER LIST"; }
+
+  const sel = document.getElementById("master-dept-select");
+  let deptId = sel.value;
+  if (!deptId) { alert("Select a department."); reset(); return; }
+
+  if (deptId === "__new__") {
+    const newName = document.getElementById("master-dept-new").value.trim();
+    if (!newName) { alert("Enter the new department name."); reset(); return; }
+    const { data, error } = await sb.from("departments").insert({ name: newName }).select().single();
+    if (error) { logTo("master-log", "❌ " + error.message, "err"); reset(); return; }
+    deptId = data.id;
+    logTo("master-log", "✅ Created department: " + newName, "ok");
+    populateDeptSelect("sap-dept-select", false);
+    populateDeptSelect("recon-dept-select", false);
+    populateDeptSelect("export-dept-select", false);
+  }
+
+  if (extractedMasterRows.length === 0) { alert("No data parsed."); reset(); return; }
+
+  const rows = extractedMasterRows.map(r => ({ ...r, department_id: deptId, updated_at: new Date().toISOString() }));
+  const chunkSize = 500;
+  const chunks = [];
+  for (let i = 0; i < rows.length; i += chunkSize) chunks.push(rows.slice(i, i + chunkSize));
+
+  logTo("master-log", "🚀 Uploading " + rows.length + " rows in " + chunks.length + " chunk(s)...");
+  let uploaded = 0, failed = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const { error } = await sb.from("products").upsert(chunks[i], { onConflict: "barcode" });
+    if (error) { failed += chunks[i].length; logTo("master-log", "❌ Chunk " + (i+1) + " failed: " + error.message, "err"); }
+    else { uploaded += chunks[i].length; }
+  }
+  logTo("master-log", (failed === 0 ? "✅ " : "⚠️ ") + "Done. " + uploaded + " uploaded, " + failed + " failed.", failed === 0 ? "ok" : "err");
+  reset();
+}
+
+// ═══════════════════════════════════════════════════
+// SAP UPLOAD
+// ═══════════════════════════════════════════════════
+const SAP_COL_INDICES = [0, 1, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+let extractedSapRows = [];
+
+document.getElementById("sap-file-input").addEventListener("change", function(e) {
+  if (e.target.files[0]) handleSapFile(e.target.files[0]);
+});
+
+function formatSapDate(val) {
+  var d;
+  if (typeof val === "number") d = new Date(Math.round((val - 25569) * 86400 * 1000));
+  else d = new Date(val);
+  if (isNaN(d.getTime())) return val;
+  var dd = String(d.getDate()).padStart(2, "0");
+  var mm = String(d.getMonth() + 1).padStart(2, "0");
+  return dd + "." + mm + "." + d.getFullYear();
+}
+
+function handleSapFile(file) {
+  logTo("sap-log", "Reading " + file.name + "...");
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const data = new Uint8Array(e.target.result);
+    const workbook = XLSX.read(data, { type: "array" });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const allRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false, dateNF: "DD/MM/YYYY" });
+    if (allRows.length < 2) { logTo("sap-log", "❌ File appears empty.", "err"); return; }
+
+    extractedSapRows = [];
+    for (let i = 1; i < allRows.length; i++) {
+      const row = allRows[i];
+      if (!row[0] && !row[2]) continue;
+      const extracted = SAP_COL_INDICES.map(function(idx) {
+        let val = row[idx] !== undefined ? row[idx] : "";
+        if (idx === 10 && val) val = formatSapDate(val);
+        return val;
+      });
+      extractedSapRows.push(extracted);
+    }
+    document.getElementById("sap-preview-info").textContent = extractedSapRows.length + " rows ready.";
+    logTo("sap-log", "✅ Parsed " + extractedSapRows.length + " rows.", "ok");
+    document.getElementById("btn-sap-upload").disabled = false;
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function startSapImport() {
+  const btn = document.getElementById("btn-sap-upload");
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = "Uploading...";
+  function reset() { btn.disabled = false; btn.textContent = "⬆ Replace SAP Data"; }
+
+  const deptId = document.getElementById("sap-dept-select").value;
+  const countDateRaw = document.getElementById("sap-count-date").value;
+  if (!deptId) { alert("Select a department."); reset(); return; }
+  if (!countDateRaw) { alert("Enter the count date."); reset(); return; }
+  if (extractedSapRows.length === 0) { alert("No data parsed."); reset(); return; }
+
+  const [y, m, d] = countDateRaw.split("-");
+  const countDate = d + "." + m + "." + y;
+
+  logTo("sap-log", "🗑 Clearing old SAP data for this department...");
+  const { error: delErr } = await sb.from("sap_uploads").delete().eq("department_id", deptId);
+  if (delErr) { logTo("sap-log", "❌ " + delErr.message, "err"); reset(); return; }
+
+  const rows = extractedSapRows.map(r => ({
+    department_id: deptId,
+    phys_inventory_doc: r[0], item: r[1], material: r[2], description: r[3],
+    batch: r[4], plant: r[5], storage_location: r[6], special_stock: r[7],
+    count_date: countDate, base_uom: r[10], book_quantity: Number(r[11]) || null
+  }));
+
+  const chunkSize = 500;
+  const chunks = [];
+  for (let i = 0; i < rows.length; i += chunkSize) chunks.push(rows.slice(i, i + chunkSize));
+
+  logTo("sap-log", "🚀 Uploading " + rows.length + " rows...");
+  let uploaded = 0, failed = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const { error } = await sb.from("sap_uploads").insert(chunks[i]);
+    if (error) { failed += chunks[i].length; logTo("sap-log", "❌ Chunk " + (i+1) + " failed: " + error.message, "err"); }
+    else { uploaded += chunks[i].length; }
+  }
+  logTo("sap-log", (failed === 0 ? "✅ " : "⚠️ ") + "Done. " + uploaded + " uploaded, " + failed + " failed.", failed === 0 ? "ok" : "err");
+  reset();
+}
+
+// ═══════════════════════════════════════════════════
+// RECONCILIATION
+// ═══════════════════════════════════════════════════
+async function loadReconciliation() {
+  const deptId = document.getElementById("recon-dept-select").value;
+  if (!deptId) { alert("Select a department."); return; }
+
+  const { data, error } = await sb.from("reconciliation").select("*").eq("department_id", deptId).order("material");
+  if (error) { alert("❌ " + error.message); return; }
+
+  const totalLines = data.length;
+  const totalQty = data.reduce((s, r) => s + (Number(r.qty_counted) || 0), 0);
+  const zeroCount = data.filter(r => r.zero_count === "X").length;
+  const summary = document.getElementById("recon-summary");
+  summary.classList.remove("hidden");
+  summary.innerHTML = "<b>" + totalLines + "</b> materials · <b>" + totalQty + "</b> total qty counted · <b>" + zeroCount + "</b> still at zero";
+
+  const table = document.getElementById("recon-table");
+  table.innerHTML = "<tr><th>Material</th><th>Description</th><th>Book Qty</th><th>Qty Counted</th><th>Zero</th></tr>" +
+    data.map(r => "<tr><td>" + r.material + "</td><td>" + (r.description||"") + "</td><td>" + (r.book_quantity ?? "") + "</td><td>" + r.qty_counted + "</td><td>" + r.zero_count + "</td></tr>").join("");
+
+  const { data: unmatched } = await sb.from("unmatched_scans").select("*").eq("department_id", deptId).order("material");
+  const utable = document.getElementById("unmatched-table");
+  if (!unmatched || unmatched.length === 0) {
+    utable.innerHTML = "<tr><td style='padding:10px;color:#999'>None — every scanned item matches the SAP book list.</td></tr>";
+  } else {
+    utable.innerHTML = "<tr><th>Material</th><th>Description</th><th>Qty Counted</th></tr>" +
+      unmatched.map(r => "<tr><td>" + r.material + "</td><td>" + (r.description||"") + "</td><td>" + r.qty_counted + "</td></tr>").join("");
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// SESSIONS / COUNT SHEET (Zone Count Report)
+// ═══════════════════════════════════════════════════
+async function loadSessionsList() {
+  const { data, error } = await sb
+    .from("gondola_sessions")
+    .select("id, gondola_id, staff_name, status, started_at, departments(name)")
+    .order("started_at", { ascending: false })
+    .limit(50);
+
+  const sel = document.getElementById("session-select");
+  if (error || !data || data.length === 0) { sel.innerHTML = '<option value="">No sessions found</option>'; return; }
+  sel.innerHTML = data.map(s =>
+    '<option value="' + s.id + '">' + s.gondola_id + " — " + (s.departments ? s.departments.name : "?") +
+    " (" + s.status + ", " + s.staff_name + ")</option>"
+  ).join("");
+}
+
+async function loadCountSheet() {
+  const sessionId = document.getElementById("session-select").value;
+  if (!sessionId) { alert("No session selected."); return; }
+
+  document.getElementById("session-log").innerHTML = "Loading...";
+
+  const { data: session, error: sErr } = await sb.from("gondola_sessions").select("*, departments(name)").eq("id", sessionId).single();
+  if (sErr || !session) { document.getElementById("session-log").innerHTML = "❌ Couldn't load session."; return; }
+
+  const { data: items, error: iErr } = await sb.from("scan_items").select("*").eq("session_id", sessionId).order("material");
+  if (iErr) { document.getElementById("session-log").innerHTML = "❌ Couldn't load items."; return; }
+
+  document.getElementById("ps-dept").textContent = session.departments ? session.departments.name : "";
+  document.getElementById("ps-gondola").textContent = session.gondola_id;
+  document.getElementById("ps-staff").textContent = session.staff_name || "";
+  document.getElementById("ps-status").textContent = session.status;
+  document.getElementById("ps-printed").textContent = new Date().toLocaleString();
+
+  const body = document.getElementById("ps-body");
+  body.innerHTML = items.length === 0
+    ? '<tr><td colspan="4" style="text-align:center;color:#999;padding:10px">No items scanned.</td></tr>'
+    : items.map(it => "<tr><td style='border:1px solid #999;padding:6px'>" + it.material + "</td><td style='border:1px solid #999;padding:6px'>" + it.description +
+        "</td><td style='border:1px solid #999;padding:6px'>" + it.uom + "</td><td style='border:1px solid #999;padding:6px;text-align:right'>" + it.qty + "</td></tr>").join("");
+
+  document.getElementById("session-log").innerHTML = "✅ Loaded " + items.length + " item(s). Click Print when ready.";
+}
+
+// ═══════════════════════════════════════════════════
+// EXPORT FOR SAP
+// ═══════════════════════════════════════════════════
+let currentExportRows = [];
+let currentExportDept = "";
+
+async function previewExport() {
+  const deptId = document.getElementById("export-dept-select").value;
+  if (!deptId) { alert("Select a department."); return; }
+
+  document.getElementById("export-log").innerHTML = "Fetching...";
+  const { data, error } = await sb.from("sap_export").select("*").eq("department_id", deptId);
+  if (error) { document.getElementById("export-log").innerHTML = "❌ " + error.message; return; }
+  if (!data || data.length === 0) { document.getElementById("export-log").innerHTML = "⚠️ No SAP data for this department — upload it first."; document.getElementById("btn-export-download").disabled = true; return; }
+
+  currentExportRows = data;
+  currentExportDept = data[0].department;
+
+  const totalLines = data.length;
+  const totalQty = data.reduce((s, r) => s + (Number(r.qty_counted) || 0), 0);
+  const zeroCount = data.filter(r => r.zero_count === "X").length;
+
+  const box = document.getElementById("export-summary");
+  box.classList.remove("hidden");
+  box.innerHTML = "<b>" + currentExportDept + "</b><br/>Total lines: " + totalLines + "<br/>Total qty counted: " + totalQty + "<br/>Zero-count lines: " + zeroCount;
+
+  document.getElementById("export-log").innerHTML = "✅ Ready to download.";
+  document.getElementById("btn-export-download").disabled = false;
+}
+
+function downloadExport() {
+  if (currentExportRows.length === 0) { alert("Preview first."); return; }
+
+  const headers = ["Phys. Inventory Doc.","Item","Material","Material Description","Batch","Plant","Storage location","Special Stock","Count Date","Qty Counted","Base Unit of Measure","Book Quantity","Zero Count"];
+  const sheetData = currentExportRows.map(r => ({
+    "Phys. Inventory Doc.": r.phys_inventory_doc, "Item": r.item, "Material": r.material, "Material Description": r.description,
+    "Batch": r.batch, "Plant": r.plant, "Storage location": r.storage_location, "Special Stock": r.special_stock,
+    "Count Date": r.count_date, "Qty Counted": r.qty_counted, "Base Unit of Measure": r.base_uom,
+    "Book Quantity": r.book_quantity, "Zero Count": r.zero_count
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(sheetData, { header: headers });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "SAP Upload");
+  XLSX.writeFile(wb, "SAP_Export_" + currentExportDept.replace(/\s+/g, "_") + "_" + new Date().toISOString().slice(0,10) + ".xlsx");
+  document.getElementById("export-log").innerHTML = "✅ Downloaded.";
+}
+</script>
+</body>
+</html>
