@@ -140,6 +140,8 @@
   <div class="section-panel" id="section-sessions">
     <div class="card">
       <h2>📋 Gondola Sessions</h2>
+      <label>Department (filter)</label>
+      <select id="session-dept-filter"><option value="">All departments</option></select>
       <label>Session</label>
       <select id="session-select"><option>Loading...</option></select>
       <button class="btn btn-admin" onclick="loadCountSheet()">Load Zone Count Report</button>
@@ -187,12 +189,12 @@
     <div><b>Staff:</b> <span id="ps-staff"></span> &nbsp; <b>Status:</b> <span id="ps-status"></span></div>
     <div><b>Printed:</b> <span id="ps-printed"></span></div>
   </div>
-  <table style="width:100%;border-collapse:collapse;font-size:14px">
+  <table style="width:100%;border-collapse:collapse;font-size:11px">
     <thead><tr>
-      <th style="border:1px solid #999;padding:8px;background:#eee;text-align:left">Material</th>
-      <th style="border:1px solid #999;padding:8px;background:#eee;text-align:left">Description</th>
-      <th style="border:1px solid #999;padding:8px;background:#eee;text-align:left">UOM</th>
-      <th style="border:1px solid #999;padding:8px;background:#eee;text-align:right">Qty Counted</th>
+      <th style="border:1px solid #999;padding:3px 5px;background:#eee;text-align:left">Barcode</th>
+      <th style="border:1px solid #999;padding:3px 5px;background:#eee;text-align:left">Description</th>
+      <th style="border:1px solid #999;padding:3px 5px;background:#eee;text-align:left">UOM</th>
+      <th style="border:1px solid #999;padding:3px 5px;background:#eee;text-align:right">Qty Counted</th>
     </tr></thead>
     <tbody id="ps-body"></tbody>
   </table>
@@ -226,6 +228,11 @@ function initAdminPanel() {
   populateDeptSelect("recon-dept-select", false);
   populateDeptSelect("export-dept-select", false);
   populateDeptSelect("clear-dept-select", false);
+  populateDeptSelect("session-dept-filter", false).then(function() {
+    // populateDeptSelect always adds a "Select department..." first option — for a filter, "All departments" reads better
+    document.getElementById("session-dept-filter").options[0].text = "All departments";
+  });
+  document.getElementById("session-dept-filter").addEventListener("change", loadSessionsList);
   document.getElementById("sap-count-date").valueAsDate = new Date();
   loadSessionsList();
 }
@@ -470,11 +477,17 @@ async function loadReconciliation() {
 // SESSIONS / COUNT SHEET (Zone Count Report)
 // ═══════════════════════════════════════════════════
 async function loadSessionsList() {
-  const { data, error } = await sb
+  const deptFilter = document.getElementById("session-dept-filter").value;
+
+  let query = sb
     .from("gondola_sessions")
     .select("id, gondola_id, staff_name, status, started_at, departments(name)")
     .order("started_at", { ascending: false })
     .limit(50);
+
+  if (deptFilter) query = query.eq("department_id", deptFilter);
+
+  const { data, error } = await query;
 
   const sel = document.getElementById("session-select");
   if (error || !data || data.length === 0) { sel.innerHTML = '<option value="">No sessions found</option>'; return; }
@@ -505,8 +518,8 @@ async function loadCountSheet() {
   const body = document.getElementById("ps-body");
   body.innerHTML = items.length === 0
     ? '<tr><td colspan="4" style="text-align:center;color:#999;padding:10px">No items scanned.</td></tr>'
-    : items.map(it => "<tr><td style='border:1px solid #999;padding:6px'>" + it.material + "</td><td style='border:1px solid #999;padding:6px'>" + it.description +
-        "</td><td style='border:1px solid #999;padding:6px'>" + it.uom + "</td><td style='border:1px solid #999;padding:6px;text-align:right'>" + it.qty + "</td></tr>").join("");
+    : items.map(it => "<tr><td style='border:1px solid #999;padding:3px 5px'>" + it.barcode + "</td><td style='border:1px solid #999;padding:3px 5px'>" + it.description +
+        "</td><td style='border:1px solid #999;padding:3px 5px'>" + it.uom + "</td><td style='border:1px solid #999;padding:3px 5px;text-align:right'>" + it.qty + "</td></tr>").join("");
 
   document.getElementById("session-log").innerHTML = "✅ Loaded " + items.length + " item(s). Click Print when ready.";
 }
