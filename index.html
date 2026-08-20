@@ -63,6 +63,9 @@
   <span>📦 StockTake</span>
   <span class="gondola-badge" id="header-gondola">No session</span>
 </div>
+<div id="outlet-banner" style="background:#0d47a1; color:white; text-align:center; padding:6px; font-size:13px; font-weight:bold; letter-spacing:0.5px;">
+  OUTLET: <span id="outlet-banner-name">Loading...</span>
+</div>
 
 <!-- Setup Screen -->
 <div class="screen active page-content" id="screen-setup">
@@ -147,10 +150,19 @@
 </div>
 
 <script>
+// ══════════════════════════════════════════════════════
+// OUTLET LOCK — this deployment is permanently locked to ONE outlet.
+// This is deliberate: staff should never have to pick their own outlet.
+// This is the ONLY line that should differ between the SHPL and SHBN
+// copies of this file — everything else is identical.
+// ══════════════════════════════════════════════════════
+const OUTLET_CODE = "1015 - SHPL";
+
 const SUPABASE_URL = "https://fcigsdjzyyrhxjfuyilc.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Rc_eDYds1FWvEwM6kpujZA_LNjgUlbP";
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+let outletId        = null;
 let gondola        = "";
 let department     = "";
 let departmentId    = null;
@@ -161,10 +173,27 @@ let sessionLog      = [];
 let codeReader      = null;
 let cameraActive    = false;
 
-window.addEventListener("load", function() {
+window.addEventListener("load", async function() {
+  await resolveOutlet();
   loadDepartments();
   restoreSession();
 });
+
+// ── OUTLET RESOLUTION ─────────────────────────────────
+async function resolveOutlet() {
+  var banner = document.getElementById("outlet-banner-name");
+  try {
+    const { data, error } = await sb.from("outlets").select("id, name").eq("name", OUTLET_CODE).maybeSingle();
+    if (error || !data) throw error || new Error("Outlet not found: " + OUTLET_CODE);
+    outletId = data.id;
+    banner.textContent = data.name;
+  } catch (err) {
+    banner.textContent = "⚠️ CONFIG ERROR — outlet not recognized. Do not use this device.";
+    document.getElementById("outlet-banner").style.background = "#b71c1c";
+    document.getElementById("btn-start").disabled = true;
+    document.getElementById("btn-start").textContent = "Setup error — contact admin";
+  }
+}
 
 // ── DEPARTMENTS / CONNECTION CHECK ────────────────────
 async function loadDepartments() {
@@ -207,6 +236,7 @@ async function checkAndStart() {
   if (!deptId) { alert("Please select a department."); return; }
   if (!gond) { alert("Please enter a Gondola ID."); return; }
   if (gond.length > 6) { alert("Gondola ID cannot exceed 6 characters. Please check for a scanning or typing error."); return; }
+  if (!outletId) { alert("⚠️ Outlet not set up correctly. Contact admin before continuing."); return; }
 
   var btnStart = document.getElementById("btn-start");
   btnStart.disabled = true;
@@ -216,6 +246,7 @@ async function checkAndStart() {
     const { data: existing, error } = await sb
       .from("gondola_sessions")
       .select("*, departments(id, name)")
+      .eq("outlet_id", outletId)
       .eq("gondola_id", gond)
       .maybeSingle();
 
@@ -223,7 +254,7 @@ async function checkAndStart() {
 
     if (existing) {
       if (existing.status === "done") {
-        alert('⚠️ Gondola ID "' + gond + '" is already marked Done in ' + existing.departments.name + '. Please use a different Gondola ID.');
+        alert('⚠️ Gondola ID "' + gond + '" is already marked Done in ' + existing.departments.name + ' at this outlet. Please use a different Gondola ID.');
         btnStart.disabled = false; btnStart.textContent = "Start Session";
         return;
       }
@@ -237,7 +268,7 @@ async function checkAndStart() {
 
     const { data: created, error: createErr } = await sb
       .from("gondola_sessions")
-      .insert({ gondola_id: gond, department_id: deptId, staff_name: name })
+      .insert({ gondola_id: gond, department_id: deptId, staff_name: name, outlet_id: outletId })
       .select()
       .single();
 
@@ -246,7 +277,7 @@ async function checkAndStart() {
 
     if (createErr) {
       if (createErr.code === "23505") {
-        alert("⚠️ Someone just started this gondola. Please try again.");
+        alert("⚠️ Someone just started this gondola at this outlet. Please try again.");
       } else {
         alert("⚠️ Could not start session: " + createErr.message);
       }
@@ -268,7 +299,7 @@ function startSession(deptId, deptName, gond, sessionId) {
   department = deptName;
   gondola = gond;
   currentSessionId = sessionId;
-  document.getElementById("header-gondola").textContent = gondola + " · " + department + " · " + staffName;
+  document.getElementById("header-gondola").textContent = gondola + " · " + department + " · " + staffName + " (s" + sessionId + ")";
   document.getElementById("tab-bar").style.display = "flex";
   showScreen("screen-scan");
   showTab("scan");
@@ -342,6 +373,13 @@ async function restoreSession() {
       .maybeSingle();
 
     if (error || !data || data.status === "done") {
+      clearSessionStorage();
+      return;
+    }
+
+    // Safety net: never resume a session that belongs to a different outlet
+    // than this device is locked to (e.g. stale localStorage on a shared device)
+    if (data.outlet_id !== outletId) {
       clearSessionStorage();
       return;
     }
@@ -448,7 +486,7 @@ async function lookupBarcode() {
     if (error) throw error;
 
     if (!data) {
-      setStatus("error", "❌ Barcode not found in MASTER LIST.");
+      setStatus("error", "❌ Not found: [" + barcode + "] (" + barcode.length + " chars). Check for extra spaces or a typo.");
       currentProduct = null;
       return;
     }
