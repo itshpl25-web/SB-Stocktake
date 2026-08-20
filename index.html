@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>StockTake App</title>
+  <script src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #f0f2f5; color: #1a1a1a; min-height: 100vh; }
+    .header { background: #1a73e8; color: white; padding: 16px 20px; font-size: 18px; font-weight: bold; display: flex; align-items: center; justify-content: space-between; }
+    .gondola-badge { background: rgba(255,255,255,0.25); padding: 4px 12px; border-radius: 20px; font-size: 14px; }
+    .screen { display: none; padding: 20px; }
+    .screen.active { display: block; }
+    .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .card h2 { font-size: 16px; color: #444; margin-bottom: 16px; }
+    input[type="text"], input[type="number"], select { width: 100%; padding: 12px 14px; border: 1.5px solid #ddd; border-radius: 8px; font-size: 16px; margin-bottom: 12px; outline: none; transition: border 0.2s; background: white; }
+    input:focus, select:focus { border-color: #1a73e8; }
+    .btn { width: 100%; padding: 14px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-bottom: 10px; transition: opacity 0.2s; }
+    .btn:active { opacity: 0.8; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: #1a73e8; color: white; }
+    .btn-success { background: #34a853; color: white; }
+    .btn-outline { background: white; color: #1a73e8; border: 1.5px solid #1a73e8; }
+    .btn-danger { background: #ea4335; color: white; }
+    .btn-gray { background: #e0e0e0; color: #444; }
+    .product-info { background: #e8f5e9; border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+    .product-info p { font-size: 14px; color: #333; margin-bottom: 6px; line-height: 1.5; }
+    .product-info .product-name { font-size: 16px; font-weight: bold; color: #1a1a1a; margin-bottom: 8px; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; background: #1a73e8; color: white; margin-right: 6px; }
+    #video-container { display: none; margin-bottom: 14px; }
+    #video-container.visible { display: block; }
+    video { width: 100%; border-radius: 8px; background: #000; }
+    .scan-hint { text-align: center; font-size: 13px; color: #888; margin-top: 6px; }
+    .status { text-align: center; padding: 10px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; display: none; }
+    .status.visible { display: block; }
+    .status.loading { background: #fff3cd; color: #856404; }
+    .status.success { background: #d4edda; color: #155724; }
+    .status.error { background: #f8d7da; color: #721c24; }
+    .log-list { list-style: none; max-height: 300px; overflow-y: auto; }
+    .log-item { padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+    .log-item:last-child { border-bottom: none; }
+    .log-item .log-name { font-weight: bold; color: #1a1a1a; }
+    .log-item .log-meta { color: #888; font-size: 12px; margin-top: 2px; }
+    .tab-bar { position: fixed; bottom: 0; left: 0; right: 0; background: white; display: flex; border-top: 1px solid #e0e0e0; z-index: 100; }
+    .tab { flex: 1; padding: 12px 0; text-align: center; font-size: 12px; color: #888; cursor: pointer; border: none; background: none; }
+    .tab.active { color: #1a73e8; font-weight: bold; }
+    .tab .tab-icon { font-size: 20px; display: block; }
+    .page-content { padding-bottom: 70px; }
+    .divider { text-align: center; color: #aaa; font-size: 13px; margin: 4px 0 12px; }
+    .empty-log { text-align: center; color: #aaa; font-size: 14px; padding: 20px 0; }
+    .cache-status { text-align: center; font-size: 12px; padding: 6px; border-radius: 6px; margin-bottom: 10px; }
+    .cache-status.loading { background: #fff3cd; color: #856404; }
+    .cache-status.ready { background: #d4edda; color: #155724; }
+    .cache-status.error { background: #f8d7da; color: #721c24; }
+    label { display: block; font-size: 13px; color: #666; margin-bottom: 6px; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <span>📦 StockTake</span>
+  <span class="gondola-badge" id="header-gondola">No session</span>
+</div>
+
+<!-- Setup Screen -->
+<div class="screen active page-content" id="screen-setup">
+  <div style="margin-top: 40px;">
+    <div class="card">
+      <h2>👋 Welcome! Selamat berstock-take ! Semangat gais hehehe </h2>
+      <div class="cache-status loading" id="cache-status">⏳ Connecting to database...</div>
+
+      <label>Department</label>
+      <select id="department-input">
+        <option value="">Loading departments...</option>
+      </select>
+
+      <label>Staff Name</label>
+      <input type="text" id="staffname-input" placeholder="Enter your name..." maxlength="40"/>
+
+      <label>Gondola ID</label>
+      <input type="text" id="gondola-input" placeholder="e.g. SM1, SM2, SM3..." maxlength="6" style="text-transform: uppercase;" oninput="this.value = this.value.toUpperCase()"/>
+
+      <button class="btn btn-outline" onclick="startGondolaCamera()" id="btn-gondola-camera">📷 Scan Gondola Barcode</button>
+      <div id="gondola-video-container" style="display:none; margin-bottom:14px;">
+        <video id="gondola-video" autoplay muted playsinline style="width:100%; border-radius:8px; background:#000;"></video>
+        <p class="scan-hint">Point camera at the gondola label barcode</p>
+        <button class="btn btn-gray" style="margin-top:10px" onclick="stopGondolaCamera()">Close Camera</button>
+      </div>
+
+      <button class="btn btn-primary" id="btn-start" onclick="checkAndStart()" disabled>Loading...</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scan Screen -->
+<div class="screen page-content" id="screen-scan">
+  <div class="card">
+    <h2>📷 Scan barcode</h2>
+    <button class="btn btn-outline" onclick="startCamera()" id="btn-camera">Open Camera</button>
+    <div id="video-container">
+      <video id="video" autoplay muted playsinline></video>
+      <p class="scan-hint">Point camera at barcode — it will scan automatically</p>
+      <button class="btn btn-gray" style="margin-top:10px" onclick="stopCamera()">Close Camera</button>
+    </div>
+    <div class="divider">— or enter manually —</div>
+    <input type="text" id="barcode-input" placeholder="Type barcode number..."/>
+    <button class="btn btn-primary" onclick="lookupBarcode()">Look Up</button>
+  </div>
+
+  <div class="status" id="status-box"></div>
+
+  <div class="card" id="product-card" style="display:none">
+    <div class="product-info">
+      <p class="product-name" id="p-name"></p>
+      <p><span class="badge" id="p-uom"></span><span id="p-dept"></span></p>
+      <p style="margin-top:6px;color:#666;font-size:13px">Material: <span id="p-mat"></span></p>
+    </div>
+    <input type="number" id="qty-input" placeholder="Enter quantity..." min="0" max="9999" oninput="if(this.value.length > 4) this.value = this.value.slice(0, 4);"/>
+    <button class="btn btn-success" onclick="saveScan()">✔ Save to Sheet</button>
+    <button class="btn btn-gray" onclick="resetScan()">Cancel</button>
+  </div>
+</div>
+
+<!-- Log Screen -->
+<div class="screen page-content" id="screen-log">
+  <div class="card">
+    <h2>📋 Scanned this session</h2>
+    <button class="btn btn-outline" onclick="loadSessionLog()" id="btn-refresh-log">🔄✨ Summon Latest Logs</button>
+    <ul class="log-list" id="log-list">
+      <li class="empty-log">No scans yet.</li>
+    </ul>
+  </div>
+  <button class="btn btn-danger" onclick="endSession()">End Session / Change Gondola</button>
+  <button class="btn btn-gray" onclick="cancelCount()">✖ Cancel Count (delete all)</button>
+</div>
+
+<!-- Tab Bar -->
+<div class="tab-bar" id="tab-bar" style="display:none">
+  <button class="tab active" onclick="showTab('scan')" id="tab-scan">
+    <span class="tab-icon">🔍</span>Scan
+  </button>
+  <button class="tab" onclick="showTab('log')" id="tab-log">
+    <span class="tab-icon">📋</span>Log
+  </button>
+</div>
+
+<script>
+const SUPABASE_URL = "https://fcigsdjzyyrhxjfuyilc.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_Rc_eDYds1FWvEwM6kpujZA_LNjgUlbP";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let gondola        = "";
+let department     = "";
+let departmentId    = null;
+let staffName       = "";
+let currentSessionId = null;
+let currentProduct  = null;
+let sessionLog      = [];
+let codeReader      = null;
+let cameraActive    = false;
+
+window.addEventListener("load", function() {
+  loadDepartments();
+  restoreSession();
+});
+
+// ── DEPARTMENTS / CONNECTION CHECK ────────────────────
+async function loadDepartments() {
+  var select = document.getElementById("department-input");
+  var cacheEl = document.getElementById("cache-status");
+  cacheEl.className = "cache-status loading";
+  cacheEl.textContent = "⏳ Connecting to database...";
+
+  try {
+    const { data, error } = await sb.from("departments").select("id, name").order("name");
+    if (error) throw error;
+
+    select.innerHTML = '<option value="">Select department...</option>' +
+      data.map(function(d) {
+        return '<option value="' + d.id + '" data-name="' + d.name + '">' + d.name + '</option>';
+      }).join("");
+
+    cacheEl.className = "cache-status ready";
+    cacheEl.textContent = "✅ Connected — " + data.length + " department(s) ready";
+
+    var btnStart = document.getElementById("btn-start");
+    btnStart.disabled = false;
+    btnStart.textContent = "Start Session";
+  } catch (err) {
+    select.innerHTML = '<option value="">Failed to load — refresh</option>';
+    cacheEl.className = "cache-status error";
+    cacheEl.textContent = "⚠️ Could not connect. Refresh to retry.";
+  }
+}
+
+// ── GONDOLA SETUP WITH DUPLICATE CHECK ───────────────
+async function checkAndStart() {
+  var deptSelect = document.getElementById("department-input");
+  var deptId = deptSelect.value;
+  var deptName = deptId ? deptSelect.options[deptSelect.selectedIndex].dataset.name : "";
+  var gond = document.getElementById("gondola-input").value.trim().toUpperCase();
+  var name = document.getElementById("staffname-input").value.trim();
+
+  if (!name) { alert("Please enter your name."); return; }
+  if (!deptId) { alert("Please select a department."); return; }
+  if (!gond) { alert("Please enter a Gondola ID."); return; }
+  if (gond.length > 6) { alert("Gondola ID cannot exceed 6 characters. Please check for a scanning or typing error."); return; }
+
+  var btnStart = document.getElementById("btn-start");
+  btnStart.disabled = true;
+  btnStart.textContent = "Checking...";
+
+  try {
+    const { data: existing, error } = await sb
+      .from("gondola_sessions")
+      .select("*, departments(id, name)")
+      .eq("gondola_id", gond)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (existing) {
+      if (existing.status === "done") {
+        alert('⚠️ Gondola ID "' + gond + '" is already marked Done in ' + existing.departments.name + '. Please use a different Gondola ID.');
+        btnStart.disabled = false; btnStart.textContent = "Start Session";
+        return;
+      }
+      var resume = confirm('Gondola "' + gond + '" is already In Progress under ' + existing.departments.name + '. Resume this session?');
+      btnStart.disabled = false; btnStart.textContent = "Start Session";
+      if (!resume) return;
+      staffName = name;
+      startSession(existing.departments.id, existing.departments.name, gond, existing.id);
+      return;
+    }
+
+    const { data: created, error: createErr } = await sb
+      .from("gondola_sessions")
+      .insert({ gondola_id: gond, department_id: deptId, staff_name: name })
+      .select()
+      .single();
+
+    btnStart.disabled = false;
+    btnStart.textContent = "Start Session";
+
+    if (createErr) {
+      if (createErr.code === "23505") {
+        alert("⚠️ Someone just started this gondola. Please try again.");
+      } else {
+        alert("⚠️ Could not start session: " + createErr.message);
+      }
+      return;
+    }
+
+    staffName = name;
+    startSession(deptId, deptName, gond, created.id);
+
+  } catch (err) {
+    btnStart.disabled = false;
+    btnStart.textContent = "Start Session";
+    alert("⚠️ Connection error. Could not verify Gondola ID. Check internet and try again.");
+  }
+}
+
+function startSession(deptId, deptName, gond, sessionId) {
+  departmentId = deptId;
+  department = deptName;
+  gondola = gond;
+  currentSessionId = sessionId;
+  document.getElementById("header-gondola").textContent = gondola + " · " + department + " · " + staffName;
+  document.getElementById("tab-bar").style.display = "flex";
+  showScreen("screen-scan");
+  showTab("scan");
+  saveSessionToStorage();
+  loadSessionLog();
+}
+
+async function loadSessionLog(retryCount) {
+  retryCount = retryCount || 0;
+
+  var refreshBtn = document.getElementById("btn-refresh-log");
+  if (refreshBtn && retryCount === 0) { refreshBtn.disabled = true; refreshBtn.textContent = "🔄🌀 Opening portal to database... kamu santai jap - Shai"; }
+
+  try {
+    const { data, error } = await sb
+      .from("scan_items")
+      .select("*")
+      .eq("session_id", currentSessionId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    sessionLog = data.map(function(it) {
+      return { id: it.id, name: it.description, qty: it.qty, uom: it.uom, numerator: it.numerator, barcode: it.barcode };
+    });
+    renderLog();
+    resetRefreshButton();
+  } catch (err) {
+    if (retryCount < 3) {
+      setTimeout(function() { loadSessionLog(retryCount + 1); }, 1500);
+    } else {
+      showLogLoadError();
+      resetRefreshButton();
+    }
+  }
+}
+
+function resetRefreshButton() {
+  var refreshBtn = document.getElementById("btn-refresh-log");
+  if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = "🔄✨ Summon Latest Logs"; }
+}
+
+function showLogLoadError() {
+  var list = document.getElementById("log-list");
+  list.innerHTML = '<li class="empty-log">⚠️ Could not load your scanned items.<br/><button class="btn btn-outline" style="width:auto; padding:8px 16px; margin-top:10px;" onclick="loadSessionLog()">Retry</button></li>';
+}
+
+function saveSessionToStorage() {
+  try {
+    localStorage.setItem("stocktake_session", JSON.stringify({
+      sessionId: currentSessionId, gondola: gondola, department: department, departmentId: departmentId, staffName: staffName
+    }));
+  } catch(e) {}
+}
+
+function clearSessionStorage() {
+  try { localStorage.removeItem("stocktake_session"); } catch(e) {}
+}
+
+async function restoreSession() {
+  try {
+    var saved = localStorage.getItem("stocktake_session");
+    if (!saved) return;
+    var s = JSON.parse(saved);
+    if (!s.sessionId) return;
+
+    const { data, error } = await sb
+      .from("gondola_sessions")
+      .select("*, departments(id, name)")
+      .eq("id", s.sessionId)
+      .maybeSingle();
+
+    if (error || !data || data.status === "done") {
+      clearSessionStorage();
+      return;
+    }
+
+    staffName = s.staffName || data.staff_name || "";
+    startSession(data.departments.id, data.departments.name, data.gondola_id, data.id);
+  } catch(e) {}
+}
+
+// ── TABS ─────────────────────────────────────────────
+function showTab(tab) {
+  document.querySelectorAll(".tab").forEach(function(t) { t.classList.remove("active"); });
+  document.getElementById("tab-" + tab).classList.add("active");
+  showScreen("screen-" + tab);
+  if (tab !== "scan") stopCamera();
+}
+
+function showScreen(id) {
+  document.querySelectorAll(".screen").forEach(function(s) { s.classList.remove("active"); });
+  document.getElementById(id).classList.add("active");
+}
+
+// ── CAMERA ───────────────────────────────────────────
+function startCamera() {
+  document.getElementById("video-container").classList.add("visible");
+  document.getElementById("btn-camera").style.display = "none";
+  setStatus("loading", "Starting camera...");
+  try {
+    codeReader = new ZXing.BrowserMultiFormatReader();
+    cameraActive = true;
+    codeReader.decodeFromVideoDevice(null, "video", function(result, err) {
+      if (result && cameraActive) {
+        cameraActive = false;
+        var barcode = result.getText();
+        stopCamera();
+        document.getElementById("barcode-input").value = barcode;
+        setStatus("loading", "⏳ Looking up barcode...");
+        lookupBarcode();
+      }
+    });
+    setStatus("", "");
+  } catch(e) {
+    setStatus("error", "Camera error: " + e.message);
+  }
+}
+
+// ── GONDOLA BARCODE CAMERA (setup screen) ────────────
+let gondolaCodeReader = null;
+let gondolaCameraActive = false;
+
+function startGondolaCamera() {
+  document.getElementById("gondola-video-container").style.display = "block";
+  document.getElementById("btn-gondola-camera").style.display = "none";
+
+  try {
+    gondolaCodeReader = new ZXing.BrowserMultiFormatReader();
+    gondolaCameraActive = true;
+    gondolaCodeReader.decodeFromVideoDevice(null, "gondola-video", function(result, err) {
+      if (result && gondolaCameraActive) {
+        gondolaCameraActive = false;
+        var scannedValue = result.getText().trim().toUpperCase();
+        stopGondolaCamera();
+        if (scannedValue.length > 6) {
+          alert("⚠️ Scanned code \"" + scannedValue + "\" is too long for a Gondola ID (max 6 characters). This looks like a product barcode, not a gondola label. Cuba scan betul2, hihi - shai.");
+          return;
+        }
+        document.getElementById("gondola-input").value = scannedValue;
+      }
+    });
+  } catch(e) {
+    alert("Camera error: " + e.message);
+    stopGondolaCamera();
+  }
+}
+
+function stopGondolaCamera() {
+  gondolaCameraActive = false;
+  if (gondolaCodeReader) { gondolaCodeReader.reset(); gondolaCodeReader = null; }
+  document.getElementById("gondola-video-container").style.display = "none";
+  document.getElementById("btn-gondola-camera").style.display = "block";
+}
+
+function stopCamera() {
+  cameraActive = false;
+  if (codeReader) { codeReader.reset(); codeReader = null; }
+  document.getElementById("video-container").classList.remove("visible");
+  document.getElementById("btn-camera").style.display = "block";
+}
+
+// ── BARCODE LOOKUP (live indexed query — no preload) ──
+async function lookupBarcode() {
+  var barcode = document.getElementById("barcode-input").value.trim();
+  if (!barcode) { alert("Please enter or scan a barcode."); return; }
+  hideProduct();
+  setStatus("loading", "⏳ Looking up product...");
+
+  try {
+    const { data, error } = await sb
+      .from("products")
+      .select("barcode, material, description, uom, numerator, departments(name)")
+      .eq("barcode", barcode)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!data) {
+      setStatus("error", "❌ Barcode not found in MASTER LIST.");
+      currentProduct = null;
+      return;
+    }
+
+    var prodDept = data.departments ? data.departments.name : "";
+    if (prodDept.toUpperCase() !== department.toUpperCase()) {
+      setStatus("error", "❌ This item belongs to \"" + prodDept + "\", not \"" + department + "\". Wrong department for this gondola.");
+      currentProduct = null;
+      return;
+    }
+
+    currentProduct = { barcode: data.barcode, material: data.material, description: data.description, uom: data.uom, numerator: data.numerator, department: prodDept };
+    showProduct(currentProduct);
+    setStatus("success", "✅ Product found!");
+  } catch (err) {
+    setStatus("error", "⚠️ Connection error. Check internet.");
+  }
+}
+
+// ── SAVE SCAN ─────────────────────────────────────────
+let isSaving = false;
+let currentScanRequestId = null;
+
+function generateRequestId() {
+  return Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+}
+
+async function saveScan(retryPayload, retryId) {
+  if (isSaving) return;
+
+  var payload, requestId;
+
+  if (retryPayload) {
+    payload = retryPayload;
+    requestId = retryId;
+  } else {
+    var qty = document.getElementById("qty-input").value.trim();
+    if (!qty || Number(qty) < 0) { alert("Please enter a valid quantity."); return; }
+    if (Number(qty) > 9999) { alert("Quantity cannot exceed 9999. Please check for a scanning error."); return; }
+    if (!currentProduct) { alert("No product loaded."); return; }
+
+    requestId = currentScanRequestId || generateRequestId();
+    payload = {
+      session_id:  currentSessionId,
+      barcode:     currentProduct.barcode,
+      material:    currentProduct.material,
+      description: currentProduct.description,
+      uom:         currentProduct.uom,
+      numerator:   currentProduct.numerator,
+      qty:         Number(qty),
+      request_id:  requestId
+    };
+  }
+
+  isSaving = true;
+  var saveBtn = document.querySelector('#product-card .btn-success');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving..."; }
+  setStatus("loading", "💾 Saving to database...");
+
+  var savedProduct = { description: payload.description, uom: payload.uom, numerator: payload.numerator, barcode: payload.barcode };
+  var savedQty = payload.qty;
+
+  try {
+    const { data, error } = await sb.from("scan_items").insert(payload).select().single();
+    if (error) throw error;
+
+    setStatus("success", "✅ Saved to " + department);
+    addToLog(savedProduct.description, savedQty, savedProduct.uom, data.id, savedProduct.numerator, savedProduct.barcode);
+    currentScanRequestId = null;
+    resetScan();
+    isSaving = false;
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "✔ Save to Sheet"; }
+
+  } catch (err) {
+    isSaving = false;
+
+    // A duplicate request_id means this exact save already went through on a
+    // previous attempt — that's a SUCCESS, not a failure. Idempotency working as intended.
+    if (err.code === "23505") {
+      setStatus("success", "✅ Already saved (safe retry)");
+      currentScanRequestId = null;
+      resetScan();
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "✔ Save to Sheet"; }
+      loadSessionLog();
+      return;
+    }
+
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Retry Save"; }
+    var doRetry = confirm("⚠️ Save didn't complete (" + (err.message || "server error") + "). This is safe to retry — it will NOT create a duplicate. Retry now?");
+    if (doRetry) {
+      saveScan(payload, requestId);
+    } else {
+      setStatus("error", "❌ Save failed: " + (err.message || "unknown error"));
+    }
+  }
+}
+
+// ── END SESSION ───────────────────────────────────────
+async function endSession() {
+  if (!confirm("End session for " + gondola + "? This will mark it as Done.")) return;
+
+  try {
+    await sb.from("gondola_sessions").update({ status: "done", ended_at: new Date().toISOString() }).eq("id", currentSessionId);
+  } catch(e) {}
+
+  clearSessionStorage();
+  resetSessionState();
+  showScreen("screen-setup");
+}
+
+function resetSessionState() {
+  gondola = "";
+  department = "";
+  departmentId = null;
+  staffName = "";
+  currentSessionId = null;
+  sessionLog = [];
+  currentProduct = null;
+  stopCamera();
+  resetScan();
+  renderLog();
+  document.getElementById("gondola-input").value = "";
+  document.getElementById("department-input").value = "";
+  document.getElementById("header-gondola").textContent = "No session";
+  document.getElementById("tab-bar").style.display = "none";
+}
+
+// ── UI HELPERS ────────────────────────────────────────
+function showProduct(data) {
+  document.getElementById("p-name").textContent = data.description;
+  document.getElementById("p-uom").textContent  = data.uom + (data.numerator > 1 ? " (" + data.numerator + "'s)" : "");
+  document.getElementById("p-dept").textContent = " " + (data.department || department);
+  document.getElementById("p-mat").textContent  = data.material;
+  document.getElementById("product-card").style.display = "block";
+  document.getElementById("qty-input").focus();
+  currentScanRequestId = generateRequestId(); // one fixed ID for this pending scan
+}
+
+function hideProduct() {
+  document.getElementById("product-card").style.display = "none";
+  currentProduct = null;
+}
+
+function resetScan() {
+  document.getElementById("barcode-input").value = "";
+  document.getElementById("qty-input").value = "";
+  currentScanRequestId = null;
+  hideProduct();
+  setTimeout(function() { setStatus("", ""); }, 2000);
+}
+
+function setStatus(type, msg) {
+  var box = document.getElementById("status-box");
+  box.className = "status" + (type ? " visible " + type : "");
+  box.textContent = msg;
+}
+
+function addToLog(name, qty, uom, id, numerator, barcode) {
+  sessionLog.unshift({ id: id, name: name, qty: qty, uom: uom, numerator: numerator, barcode: barcode });
+  renderLog();
+}
+
+function renderLog() {
+  var list = document.getElementById("log-list");
+  if (sessionLog.length === 0) {
+    list.innerHTML = '<li class="empty-log">No scans yet.</li>';
+    return;
+  }
+  list.innerHTML = sessionLog.map(function(item) {
+    var uomLabel = item.uom + (item.numerator > 1 ? " (" + item.numerator + "'s)" : "");
+    return '<li class="log-item">' +
+      '<div class="log-name">' + item.name + '</div>' +
+      '<div class="log-meta">Qty: ' + item.qty + ' ' + uomLabel + '</div>' +
+      '<div class="log-meta">EAN/UPC: ' + item.barcode + '</div>' +
+      '<div style="margin-top:8px; display:flex; gap:8px;">' +
+        '<button class="btn btn-gray" style="width:auto; padding:6px 14px; margin:0; font-size:12px;" onclick="editLogItem(' + item.id + ')">✎ Edit Qty</button>' +
+        '<button class="btn btn-danger" style="width:auto; padding:6px 14px; margin:0; font-size:12px;" onclick="deleteLogItem(' + item.id + ')">🗑 Delete</button>' +
+      '</div>' +
+    '</li>';
+  }).join("");
+}
+
+async function editLogItem(id) {
+  var item = sessionLog.find(function(i) { return i.id === id; });
+  if (!item) return;
+
+  var newQty = prompt("Enter new quantity for \"" + item.name + "\":", item.qty);
+  if (newQty === null) return;
+  if (newQty === "" || isNaN(newQty) || Number(newQty) < 0) { alert("Please enter a valid quantity."); return; }
+  if (Number(newQty) > 9999) { alert("Quantity cannot exceed 9999."); return; }
+
+  try {
+    const { data, error } = await sb
+      .from("scan_items")
+      .update({ qty: Number(newQty), updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select()
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!data) {
+      alert("⚠️ This item may have already been deleted. Refreshing log.");
+      loadSessionLog();
+      return;
+    }
+
+    item.qty = Number(newQty);
+    renderLog();
+  } catch (err) {
+    var doRetry = confirm("⚠️ Connection error. The update may or may not have gone through. Tap OK to safely retry, or Cancel to refresh the log manually.");
+    if (doRetry) {
+      editLogItem(id);
+    } else {
+      loadSessionLog();
+    }
+  }
+}
+
+async function deleteLogItem(id) {
+  var item = sessionLog.find(function(i) { return i.id === id; });
+  if (!item) return;
+
+  if (!confirm("Delete this scanned item? This cannot be undone.")) return;
+
+  try {
+    const { data, error } = await sb
+      .from("scan_items")
+      .delete()
+      .eq("id", id)
+      .select()
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!data) {
+      alert("⚠️ This item may have already been deleted. Refreshing log.");
+      loadSessionLog();
+      return;
+    }
+
+    sessionLog = sessionLog.filter(function(i) { return i.id !== id; });
+    renderLog();
+  } catch (err) {
+    var doRetry = confirm("⚠️ Connection error. The item may or may not have been deleted. Tap OK to safely retry, or Cancel to refresh the log manually.");
+    if (doRetry) {
+      deleteLogItem(id);
+    } else {
+      loadSessionLog();
+    }
+  }
+}
+
+async function cancelCount() {
+  if (!confirm("Cancel this count for " + gondola + "? ALL scanned items for this gondola will be permanently deleted.")) return;
+
+  try {
+    await sb.from("gondola_sessions").delete().eq("id", currentSessionId);
+  } catch(e) {}
+
+  clearSessionStorage();
+  resetSessionState();
+  document.getElementById("staffname-input").value = "";
+  showScreen("screen-setup");
+}
+</script>
+</body>
+</html>
