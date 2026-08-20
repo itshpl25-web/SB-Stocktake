@@ -84,6 +84,7 @@
     <button class="nav-tab" onclick="showSection('reconciliation')">📊 Reconciliation</button>
     <button class="nav-tab" onclick="showSection('sessions')">📋 Sessions</button>
     <button class="nav-tab" onclick="showSection('export')">📤 Export</button>
+    <button class="nav-tab" onclick="showSection('clear')">🧹 Clear</button>
   </div>
 
   <!-- ═══════════ UPLOADS ═══════════ -->
@@ -159,6 +160,22 @@
       <div id="export-log"></div>
     </div>
   </div>
+  <!-- ═══════════ CLEAR DEPARTMENT ═══════════ -->
+  <div class="section-panel" id="section-clear">
+    <div class="card">
+      <h2>🧹 Clear Department Data (after stocktake)</h2>
+      <p style="color:#666; font-size:13px; margin-bottom:16px">
+        Deletes all gondola sessions, scanned items, and SAP upload data for one department — same as clearing the sheets after a count is done.
+        <b>MASTER LIST products are never touched.</b>
+      </p>
+      <label>Department</label>
+      <select id="clear-dept-select"><option>Loading...</option></select>
+      <button class="btn btn-gray" onclick="previewClear()">Preview What Will Be Deleted</button>
+      <div id="clear-summary" class="summary-box hidden"></div>
+      <button id="btn-clear-confirm" class="btn btn-admin" onclick="clearDepartmentData()" disabled style="background:#ea4335">🗑 Clear This Department's Data</button>
+      <div id="clear-log"></div>
+    </div>
+  </div>
 
 </div>
 
@@ -208,6 +225,7 @@ function initAdminPanel() {
   populateDeptSelect("sap-dept-select", false);
   populateDeptSelect("recon-dept-select", false);
   populateDeptSelect("export-dept-select", false);
+  populateDeptSelect("clear-dept-select", false);
   document.getElementById("sap-count-date").valueAsDate = new Date();
   loadSessionsList();
 }
@@ -251,8 +269,7 @@ document.getElementById("master-file-input").addEventListener("change", function
 });
 
 function normalizeBarcode(raw) {
-  const num = Number(raw);
-  return num ? num.toFixed(0) : (raw || "").toString().trim();
+  return (raw || "").toString().trim();
 }
 
 function handleMasterFile(file) {
@@ -540,6 +557,64 @@ function downloadExport() {
   XLSX.utils.book_append_sheet(wb, ws, "SAP Upload");
   XLSX.writeFile(wb, "SAP_Export_" + currentExportDept.replace(/\s+/g, "_") + "_" + new Date().toISOString().slice(0,10) + ".xlsx");
   document.getElementById("export-log").innerHTML = "✅ Downloaded.";
+}
+
+// ═══════════════════════════════════════════════════
+// CLEAR DEPARTMENT DATA (post-stocktake reset)
+// ═══════════════════════════════════════════════════
+async function previewClear() {
+  const deptId = document.getElementById("clear-dept-select").value;
+  if (!deptId) { alert("Select a department."); return; }
+
+  const { count: sessionCount } = await sb.from("gondola_sessions").select("*", { count: "exact", head: true }).eq("department_id", deptId);
+
+  const { data: sessions } = await sb.from("gondola_sessions").select("id").eq("department_id", deptId);
+  const sessionIds = (sessions || []).map(s => s.id);
+  let scanCount = 0;
+  if (sessionIds.length > 0) {
+    const { count } = await sb.from("scan_items").select("*", { count: "exact", head: true }).in("session_id", sessionIds);
+    scanCount = count || 0;
+  }
+
+  const { count: sapCount } = await sb.from("sap_uploads").select("*", { count: "exact", head: true }).eq("department_id", deptId);
+
+  const box = document.getElementById("clear-summary");
+  box.classList.remove("hidden");
+  box.innerHTML =
+    "<b>" + (sessionCount || 0) + "</b> gondola session(s)<br/>" +
+    "<b>" + scanCount + "</b> scanned item(s)<br/>" +
+    "<b>" + (sapCount || 0) + "</b> SAP upload row(s)<br/>" +
+    "<span style='color:#155724'>✅ MASTER LIST products will NOT be touched.</span>";
+
+  document.getElementById("btn-clear-confirm").disabled = false;
+}
+
+async function clearDepartmentData() {
+  const sel = document.getElementById("clear-dept-select");
+  const deptId = sel.value;
+  const deptName = sel.options[sel.selectedIndex].text;
+  if (!deptId) return;
+
+  const typed = prompt('This permanently deletes all sessions, scans, and SAP data for "' + deptName + '".\n\nType the department name exactly to confirm:');
+  if (typed !== deptName) {
+    alert("Name didn't match — nothing was deleted.");
+    return;
+  }
+
+  document.getElementById("clear-log").innerHTML = "Clearing...";
+
+  const { error: sessErr } = await sb.from("gondola_sessions").delete().eq("department_id", deptId);
+  const { error: sapErr } = await sb.from("sap_uploads").delete().eq("department_id", deptId);
+
+  if (sessErr || sapErr) {
+    document.getElementById("clear-log").innerHTML = "❌ " + (sessErr ? sessErr.message : "") + " " + (sapErr ? sapErr.message : "");
+    return;
+  }
+
+  document.getElementById("clear-log").innerHTML = "✅ Cleared " + deptName + ". MASTER LIST products were not touched.";
+  document.getElementById("clear-summary").classList.add("hidden");
+  document.getElementById("btn-clear-confirm").disabled = true;
+  loadSessionsList();
 }
 </script>
 </body>
