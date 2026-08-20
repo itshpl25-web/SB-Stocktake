@@ -512,7 +512,7 @@ async function loadCountSheet() {
   document.getElementById("ps-dept").textContent = session.departments ? session.departments.name : "";
   document.getElementById("ps-gondola").textContent = session.gondola_id;
   document.getElementById("ps-staff").textContent = session.staff_name || "";
-  document.getElementById("ps-status").textContent = session.status;
+  document.getElementById("ps-status").textContent = session.status.replace("_", " ").toUpperCase();
   document.getElementById("ps-printed").textContent = new Date().toLocaleString();
 
   const body = document.getElementById("ps-body");
