@@ -139,7 +139,63 @@ left join (
 
 
 -- ────────────────────────────────────────────────────────────
--- UNMATCHED SCANS VIEW
+-- SESSION SUMMARY VIEW
+-- Powers the admin "Gondola Status Overview" — one row per
+-- session with its live item count, no N+1 queries needed.
+-- ────────────────────────────────────────────────────────────
+create view session_summary as
+select
+  gs.id,
+  gs.gondola_id,
+  gs.department_id,
+  d.name as department,
+  gs.staff_name,
+  gs.status,
+  gs.started_at,
+  gs.ended_at,
+  count(si.id) as item_count
+from gondola_sessions gs
+join departments d on d.id = gs.department_id
+left join scan_items si on si.session_id = gs.id
+group by gs.id, gs.gondola_id, gs.department_id, d.name, gs.staff_name, gs.status, gs.started_at, gs.ended_at;
+
+
+-- ────────────────────────────────────────────────────────────
+-- SAP EXPORT VIEW
+-- Replaces: manually downloading the UPLOAD sheet after reconcileDept().
+-- Unlike the "reconciliation" view (which groups by material for a
+-- summary), this preserves ONE ROW PER ORIGINAL SAP LINE — same
+-- Phys.Doc/Batch/Plant granularity as the source file — with the
+-- live counted quantity merged in, ready to write straight to .xlsx.
+-- ────────────────────────────────────────────────────────────
+create view sap_export as
+select
+  su.id,
+  su.department_id,
+  d.name as department,
+  su.phys_inventory_doc,
+  su.item,
+  su.material,
+  su.description,
+  su.batch,
+  su.plant,
+  su.storage_location,
+  su.special_stock,
+  su.count_date,
+  coalesce(scanned.qty_counted, 0) as qty_counted,
+  su.base_uom,
+  su.book_quantity,
+  case when coalesce(scanned.qty_counted, 0) = 0 then 'X' else '' end as zero_count
+from sap_uploads su
+join departments d on d.id = su.department_id
+left join (
+  select gs.department_id, si.material, sum(si.qty) as qty_counted
+  from scan_items si
+  join gondola_sessions gs on gs.id = si.session_id
+  group by gs.department_id, si.material
+) scanned
+  on scanned.department_id = su.department_id
+  and scanned.material = su.material;
 -- Replaces: the yellow-highlight "not in book list" flagging
 -- in the old reconcileDept(). Anything scanned that has no
 -- matching row in sap_uploads for that department shows up here.
