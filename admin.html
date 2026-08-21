@@ -105,7 +105,9 @@
 
     <div class="card">
       <h2>📥 Upload MI24 Physical Inventory Data</h2>
-      <p style="color:#666; font-size:13px; margin-bottom:16px">Replaces existing MI24 data for the selected department.</p>
+      <p style="color:#666; font-size:13px; margin-bottom:16px">Replaces existing MI24 data for the selected outlet + department.</p>
+      <label>Outlet</label>
+      <select id="sap-outlet-select"><option>Loading...</option></select>
       <label>Department</label>
       <select id="sap-dept-select"><option>Loading...(blub blub blub...)</option></select>
       <label>Count Date (applies to every row)</label>
@@ -123,6 +125,8 @@
   <div class="section-panel" id="section-reconciliation">
     <div class="card">
       <h2>📊 Live Reconciliation Report</h2>
+      <label>Outlet</label>
+      <select id="recon-outlet-select"><option>Loading...</option></select>
       <label>Department</label>
       <select id="recon-dept-select"><option>Loading...</option></select>
       <button class="btn btn-admin" onclick="loadReconciliation()">Load Report</button>
@@ -131,7 +135,7 @@
     </div>
     <div class="card">
       <h2>⚠️ Missing Material in PID</h2>
-      <p style="color:#666; font-size:13px; margin-bottom:10px">Items scanned that don't appear in the uploaded MI24 for this department.</p>
+      <p style="color:#666; font-size:13px; margin-bottom:10px">Items scanned that don't appear in the uploaded MI24 for this outlet + department.</p>
       <div class="table-scroll"><table class="data-table" id="unmatched-table"></table></div>
     </div>
   </div>
@@ -140,6 +144,8 @@
   <div class="section-panel" id="section-sessions">
     <div class="card">
       <h2>📊 Gondola Status Overview</h2>
+      <label>Outlet (filter)</label>
+      <select id="session-outlet-filter"><option value="">All outlets</option></select>
       <label>Department (filter)</label>
       <select id="session-dept-filter"><option value="">All departments</option></select>
       <div class="table-scroll"><table class="data-table" id="status-overview-table"></table></div>
@@ -159,6 +165,8 @@
   <div class="section-panel" id="section-export">
     <div class="card">
       <h2>📤 Export to upload for SAP</h2>
+      <label>Outlet</label>
+      <select id="export-outlet-select"><option>Loading...</option></select>
       <label>Department</label>
       <select id="export-dept-select"><option>Loading...</option></select>
       <button class="btn btn-admin" onclick="previewExport()">Preview Summary</button>
@@ -172,14 +180,16 @@
     <div class="card">
       <h2>🧹 Clear Department Data (after stocktake)</h2>
       <p style="color:#666; font-size:13px; margin-bottom:16px">
-        Deletes all gondola sessions, scanned items, and SAP upload data for one department — same as clearing the sheets after a count is done.
-        <b>MASTER LIST products are never touched.</b>
+        Deletes all gondola sessions, scanned items, and MI24 upload data for one outlet + department — same as clearing the sheets after a count is done.
+        <b>MASTER LIST products are never touched, and other outlets are never affected.</b>
       </p>
+      <label>Outlet</label>
+      <select id="clear-outlet-select"><option>Loading...</option></select>
       <label>Department</label>
       <select id="clear-dept-select"><option>Loading...</option></select>
       <button class="btn btn-gray" onclick="previewClear()">Preview What Will Be Deleted</button>
       <div id="clear-summary" class="summary-box hidden"></div>
-      <button id="btn-clear-confirm" class="btn btn-admin" onclick="clearDepartmentData()" disabled style="background:#ea4335">🗑 Clear This Department's Data</button>
+      <button id="btn-clear-confirm" class="btn btn-admin" onclick="clearDepartmentData()" disabled style="background:#ea4335">🗑 Clear This Outlet + Department's Data</button>
       <div id="clear-log"></div>
     </div>
   </div>
@@ -190,7 +200,7 @@
 <div id="print-sheet">
   <h2>Zone Count Report</h2>
   <div style="font-size:14px;margin-bottom:16px">
-    <div><b>Department:</b> <span id="ps-dept"></span> &nbsp; <b>Gondola:</b> <span id="ps-gondola"></span></div>
+    <div><b>Outlet:</b> <span id="ps-outlet"></span> &nbsp; <b>Department:</b> <span id="ps-dept"></span> &nbsp; <b>Gondola:</b> <span id="ps-gondola"></span></div>
     <div><b>Staff:</b> <span id="ps-staff"></span> &nbsp; <b>Status:</b> <span id="ps-status"></span></div>
     <div><b>Printed:</b> <span id="ps-printed"></span></div>
   </div>
@@ -237,10 +247,22 @@ function initAdminPanel() {
     // populateDeptSelect always adds a "Select department..." first option — for a filter, "All departments" reads better
     document.getElementById("session-dept-filter").options[0].text = "All departments";
   });
+
+  populateOutletSelect("sap-outlet-select", false);
+  populateOutletSelect("recon-outlet-select", false);
+  populateOutletSelect("export-outlet-select", false);
+  populateOutletSelect("clear-outlet-select", false);
+  populateOutletSelect("session-outlet-filter", true);
+
   document.getElementById("session-dept-filter").addEventListener("change", function() {
     loadSessionsList();
     loadStatusOverview();
   });
+  document.getElementById("session-outlet-filter").addEventListener("change", function() {
+    loadSessionsList();
+    loadStatusOverview();
+  });
+
   document.getElementById("sap-count-date").valueAsDate = new Date();
   loadSessionsList();
   loadStatusOverview();
@@ -261,6 +283,14 @@ async function populateDeptSelect(id, includeAddNew) {
   let options = '<option value="">Select department...</option>';
   if (data) options += data.map(d => '<option value="' + d.id + '">' + d.name + '</option>').join("");
   if (includeAddNew) options += '<option value="__new__">+ Add new department...</option>';
+  sel.innerHTML = options;
+}
+
+async function populateOutletSelect(id, allowAll) {
+  const { data } = await sb.from("outlets").select("id, name").order("name");
+  const sel = document.getElementById(id);
+  let options = allowAll ? '<option value="">All outlets</option>' : '<option value="">Select outlet...</option>';
+  if (data) options += data.map(o => '<option value="' + o.id + '">' + o.name + '</option>').join("");
   sel.innerHTML = options;
 }
 
@@ -414,10 +444,12 @@ async function startSapImport() {
   const btn = document.getElementById("btn-sap-upload");
   if (btn.disabled) return;
   btn.disabled = true; btn.textContent = "Uploading...";
-  function reset() { btn.disabled = false; btn.textContent = "⬆ Replace SAP Data"; }
+  function reset() { btn.disabled = false; btn.textContent = "⬆ Replace MI24 Data"; }
 
+  const outletId = document.getElementById("sap-outlet-select").value;
   const deptId = document.getElementById("sap-dept-select").value;
   const countDateRaw = document.getElementById("sap-count-date").value;
+  if (!outletId) { alert("Select an outlet."); reset(); return; }
   if (!deptId) { alert("Select a department."); reset(); return; }
   if (!countDateRaw) { alert("Enter the count date."); reset(); return; }
   if (extractedSapRows.length === 0) { alert("No data parsed."); reset(); return; }
@@ -425,12 +457,13 @@ async function startSapImport() {
   const [y, m, d] = countDateRaw.split("-");
   const countDate = d + "." + m + "." + y;
 
-  logTo("sap-log", "🗑 Clearing old SAP data for this department...");
-  const { error: delErr } = await sb.from("sap_uploads").delete().eq("department_id", deptId);
+  logTo("sap-log", "🗑 Clearing old MI24 data for this outlet + department...");
+  const { error: delErr } = await sb.from("sap_uploads").delete().eq("department_id", deptId).eq("outlet_id", outletId);
   if (delErr) { logTo("sap-log", "❌ " + delErr.message, "err"); reset(); return; }
 
   const rows = extractedSapRows.map(r => ({
     department_id: deptId,
+    outlet_id: outletId,
     phys_inventory_doc: r[0], item: r[1], material: r[2], description: r[3],
     batch: r[4], plant: r[5], storage_location: r[6], special_stock: r[7],
     count_date: countDate, base_uom: r[10], book_quantity: Number(r[11]) || null
@@ -455,10 +488,12 @@ async function startSapImport() {
 // RECONCILIATION
 // ═══════════════════════════════════════════════════
 async function loadReconciliation() {
+  const outletId = document.getElementById("recon-outlet-select").value;
   const deptId = document.getElementById("recon-dept-select").value;
+  if (!outletId) { alert("Select an outlet."); return; }
   if (!deptId) { alert("Select a department."); return; }
 
-  const { data, error } = await sb.from("reconciliation").select("*").eq("department_id", deptId).order("material");
+  const { data, error } = await sb.from("reconciliation").select("*").eq("department_id", deptId).eq("outlet_id", outletId).order("material");
   if (error) { alert("❌ " + error.message); return; }
 
   const totalLines = data.length;
@@ -472,7 +507,7 @@ async function loadReconciliation() {
   table.innerHTML = "<tr><th>Material</th><th>Description</th><th>Book Qty</th><th>Qty Counted</th><th>Zero</th></tr>" +
     data.map(r => "<tr><td>" + r.material + "</td><td>" + (r.description||"") + "</td><td>" + (r.book_quantity ?? "") + "</td><td>" + r.qty_counted + "</td><td>" + r.zero_count + "</td></tr>").join("");
 
-  const { data: unmatched } = await sb.from("unmatched_scans").select("*").eq("department_id", deptId).order("material");
+  const { data: unmatched } = await sb.from("unmatched_scans").select("*").eq("department_id", deptId).eq("outlet_id", outletId).order("material");
   const utable = document.getElementById("unmatched-table");
   if (!unmatched || unmatched.length === 0) {
     utable.innerHTML = "<tr><td style='padding:10px;color:#999'>None — every scanned item matches the SAP book list.</td></tr>";
@@ -487,9 +522,11 @@ async function loadReconciliation() {
 // ═══════════════════════════════════════════════════
 async function loadStatusOverview() {
   const deptFilter = document.getElementById("session-dept-filter").value;
+  const outletFilter = document.getElementById("session-outlet-filter").value;
 
   let query = sb.from("session_summary").select("*").order("started_at", { ascending: false }).limit(100);
   if (deptFilter) query = query.eq("department_id", deptFilter);
+  if (outletFilter) query = query.eq("outlet_id", outletFilter);
 
   const { data, error } = await query;
   const table = document.getElementById("status-overview-table");
@@ -500,7 +537,7 @@ async function loadStatusOverview() {
   }
 
   const now = new Date();
-  table.innerHTML = "<tr><th>Gondola</th><th>Department</th><th>Staff</th><th>Status</th><th>Items</th><th>Started</th></tr>" +
+  table.innerHTML = "<tr><th>Gondola</th><th>Outlet</th><th>Department</th><th>Staff</th><th>Status</th><th>Items</th><th>Started</th></tr>" +
     data.map(function(s) {
       const statusText = s.status.replace("_", " ").toUpperCase();
       const hoursOpen = (now - new Date(s.started_at)) / (1000 * 60 * 60);
@@ -509,28 +546,30 @@ async function loadStatusOverview() {
       const statusCell = stale
         ? "<span style='color:#e53935;font-weight:bold'>" + statusText + " ⚠️ " + Math.floor(hoursOpen) + "h open</span>"
         : statusText;
-      return "<tr><td>" + s.gondola_id + "</td><td>" + s.department + "</td><td>" + (s.staff_name || "") + "</td><td>" +
+      return "<tr><td>" + s.gondola_id + "</td><td>" + s.outlet + "</td><td>" + s.department + "</td><td>" + (s.staff_name || "") + "</td><td>" +
         statusCell + "</td><td>" + s.item_count + "</td><td>" + new Date(s.started_at).toLocaleString() + "</td></tr>";
     }).join("");
 }
 
 async function loadSessionsList() {
   const deptFilter = document.getElementById("session-dept-filter").value;
+  const outletFilter = document.getElementById("session-outlet-filter").value;
 
   let query = sb
     .from("gondola_sessions")
-    .select("id, gondola_id, staff_name, status, started_at, departments(name)")
+    .select("id, gondola_id, staff_name, status, started_at, departments(name), outlets(name)")
     .order("started_at", { ascending: false })
     .limit(50);
 
   if (deptFilter) query = query.eq("department_id", deptFilter);
+  if (outletFilter) query = query.eq("outlet_id", outletFilter);
 
   const { data, error } = await query;
 
   const sel = document.getElementById("session-select");
   if (error || !data || data.length === 0) { sel.innerHTML = '<option value="">No sessions found</option>'; return; }
   sel.innerHTML = data.map(s =>
-    '<option value="' + s.id + '">' + s.gondola_id + " — " + (s.departments ? s.departments.name : "?") +
+    '<option value="' + s.id + '">' + s.gondola_id + " — " + (s.outlets ? s.outlets.name : "?") + " — " + (s.departments ? s.departments.name : "?") +
     " (" + s.status.replace("_", " ").toUpperCase() + ", " + s.staff_name + ")</option>"
   ).join("");
 }
@@ -541,12 +580,13 @@ async function loadCountSheet() {
 
   document.getElementById("session-log").innerHTML = "Loading...";
 
-  const { data: session, error: sErr } = await sb.from("gondola_sessions").select("*, departments(name)").eq("id", sessionId).single();
+  const { data: session, error: sErr } = await sb.from("gondola_sessions").select("*, departments(name), outlets(name)").eq("id", sessionId).single();
   if (sErr || !session) { document.getElementById("session-log").innerHTML = "❌ Couldn't load session."; return; }
 
   const { data: items, error: iErr } = await sb.from("scan_items").select("*").eq("session_id", sessionId).order("material");
   if (iErr) { document.getElementById("session-log").innerHTML = "❌ Couldn't load items."; return; }
 
+  document.getElementById("ps-outlet").textContent = session.outlets ? session.outlets.name : "";
   document.getElementById("ps-dept").textContent = session.departments ? session.departments.name : "";
   document.getElementById("ps-gondola").textContent = session.gondola_id;
   document.getElementById("ps-staff").textContent = session.staff_name || "";
@@ -567,18 +607,22 @@ async function loadCountSheet() {
 // ═══════════════════════════════════════════════════
 let currentExportRows = [];
 let currentExportDept = "";
+let currentExportOutlet = "";
 
 async function previewExport() {
+  const outletId = document.getElementById("export-outlet-select").value;
   const deptId = document.getElementById("export-dept-select").value;
+  if (!outletId) { alert("Select an outlet."); return; }
   if (!deptId) { alert("Select a department."); return; }
 
   document.getElementById("export-log").innerHTML = "Fetching...";
-  const { data, error } = await sb.from("sap_export").select("*").eq("department_id", deptId);
+  const { data, error } = await sb.from("sap_export").select("*").eq("department_id", deptId).eq("outlet_id", outletId);
   if (error) { document.getElementById("export-log").innerHTML = "❌ " + error.message; return; }
-  if (!data || data.length === 0) { document.getElementById("export-log").innerHTML = "⚠️ No SAP data for this department — upload it first."; document.getElementById("btn-export-download").disabled = true; return; }
+  if (!data || data.length === 0) { document.getElementById("export-log").innerHTML = "⚠️ No MI24 data for this outlet + department — upload it first."; document.getElementById("btn-export-download").disabled = true; return; }
 
   currentExportRows = data;
   currentExportDept = data[0].department;
+  currentExportOutlet = data[0].outlet;
 
   const totalLines = data.length;
   const totalQty = data.reduce((s, r) => s + (Number(r.qty_counted) || 0), 0);
@@ -586,7 +630,7 @@ async function previewExport() {
 
   const box = document.getElementById("export-summary");
   box.classList.remove("hidden");
-  box.innerHTML = "<b>" + currentExportDept + "</b><br/>Total lines: " + totalLines + "<br/>Total qty counted: " + totalQty + "<br/>Zero-count lines: " + zeroCount;
+  box.innerHTML = "<b>" + currentExportOutlet + " — " + currentExportDept + "</b><br/>Total lines: " + totalLines + "<br/>Total qty counted: " + totalQty + "<br/>Zero-count lines: " + zeroCount;
 
   document.getElementById("export-log").innerHTML = "✅ Ready to download.";
   document.getElementById("btn-export-download").disabled = false;
@@ -606,7 +650,7 @@ function downloadExport() {
   const ws = XLSX.utils.json_to_sheet(sheetData, { header: headers });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "SAP Upload");
-  XLSX.writeFile(wb, "SAP_Export_" + currentExportDept.replace(/\s+/g, "_") + "_" + new Date().toISOString().slice(0,10) + ".xlsx");
+  XLSX.writeFile(wb, "SAP_Export_" + currentExportOutlet.replace(/\s+/g, "_") + "_" + currentExportDept.replace(/\s+/g, "_") + "_" + new Date().toISOString().slice(0,10) + ".xlsx");
   document.getElementById("export-log").innerHTML = "✅ Downloaded.";
 }
 
@@ -614,12 +658,14 @@ function downloadExport() {
 // CLEAR DEPARTMENT DATA (post-stocktake reset)
 // ═══════════════════════════════════════════════════
 async function previewClear() {
+  const outletId = document.getElementById("clear-outlet-select").value;
   const deptId = document.getElementById("clear-dept-select").value;
+  if (!outletId) { alert("Select an outlet."); return; }
   if (!deptId) { alert("Select a department."); return; }
 
-  const { count: sessionCount } = await sb.from("gondola_sessions").select("*", { count: "exact", head: true }).eq("department_id", deptId);
+  const { count: sessionCount } = await sb.from("gondola_sessions").select("*", { count: "exact", head: true }).eq("department_id", deptId).eq("outlet_id", outletId);
 
-  const { data: sessions } = await sb.from("gondola_sessions").select("id").eq("department_id", deptId);
+  const { data: sessions } = await sb.from("gondola_sessions").select("id").eq("department_id", deptId).eq("outlet_id", outletId);
   const sessionIds = (sessions || []).map(s => s.id);
   let scanCount = 0;
   if (sessionIds.length > 0) {
@@ -627,42 +673,46 @@ async function previewClear() {
     scanCount = count || 0;
   }
 
-  const { count: sapCount } = await sb.from("sap_uploads").select("*", { count: "exact", head: true }).eq("department_id", deptId);
+  const { count: sapCount } = await sb.from("sap_uploads").select("*", { count: "exact", head: true }).eq("department_id", deptId).eq("outlet_id", outletId);
 
   const box = document.getElementById("clear-summary");
   box.classList.remove("hidden");
   box.innerHTML =
     "<b>" + (sessionCount || 0) + "</b> gondola session(s)<br/>" +
     "<b>" + scanCount + "</b> scanned item(s)<br/>" +
-    "<b>" + (sapCount || 0) + "</b> SAP upload row(s)<br/>" +
-    "<span style='color:#155724'>✅ MASTER LIST products will NOT be touched.</span>";
+    "<b>" + (sapCount || 0) + "</b> MI24 upload row(s)<br/>" +
+    "<span style='color:#155724'>✅ MASTER LIST products, and every OTHER outlet's data, will NOT be touched.</span>";
 
   document.getElementById("btn-clear-confirm").disabled = false;
 }
 
 async function clearDepartmentData() {
-  const sel = document.getElementById("clear-dept-select");
-  const deptId = sel.value;
-  const deptName = sel.options[sel.selectedIndex].text;
-  if (!deptId) return;
+  const outletSel = document.getElementById("clear-outlet-select");
+  const deptSel = document.getElementById("clear-dept-select");
+  const outletId = outletSel.value;
+  const deptId = deptSel.value;
+  const outletName = outletSel.options[outletSel.selectedIndex].text;
+  const deptName = deptSel.options[deptSel.selectedIndex].text;
+  if (!outletId || !deptId) return;
 
-  const typed = prompt('This permanently deletes all sessions, scans, and SAP data for "' + deptName + '".\n\nType the department name exactly to confirm:');
-  if (typed !== deptName) {
-    alert("Name didn't match — nothing was deleted.");
+  const label = outletName + " — " + deptName;
+  const typed = prompt('This permanently deletes all sessions, scans, and MI24 data for "' + label + '" ONLY (other outlets are untouched).\n\nType exactly to confirm:\n' + label);
+  if (typed !== label) {
+    alert("Text didn't match — nothing was deleted.");
     return;
   }
 
   document.getElementById("clear-log").innerHTML = "Clearing...";
 
-  const { error: sessErr } = await sb.from("gondola_sessions").delete().eq("department_id", deptId);
-  const { error: sapErr } = await sb.from("sap_uploads").delete().eq("department_id", deptId);
+  const { error: sessErr } = await sb.from("gondola_sessions").delete().eq("department_id", deptId).eq("outlet_id", outletId);
+  const { error: sapErr } = await sb.from("sap_uploads").delete().eq("department_id", deptId).eq("outlet_id", outletId);
 
   if (sessErr || sapErr) {
     document.getElementById("clear-log").innerHTML = "❌ " + (sessErr ? sessErr.message : "") + " " + (sapErr ? sapErr.message : "");
     return;
   }
 
-  document.getElementById("clear-log").innerHTML = "✅ Cleared " + deptName + ". MASTER LIST products were not touched.";
+  document.getElementById("clear-log").innerHTML = "✅ Cleared " + label + ". MASTER LIST products and other outlets were not touched.";
   document.getElementById("clear-summary").classList.add("hidden");
   document.getElementById("btn-clear-confirm").disabled = true;
   loadSessionsList();
