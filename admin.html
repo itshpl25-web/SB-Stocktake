@@ -695,7 +695,7 @@ async function clearDepartmentData() {
   const deptName = deptSel.options[deptSel.selectedIndex].text;
   if (!outletId || !deptId) return;
 
-  const label = outletName + " — " + deptName;
+  const label = outletName + " - " + deptName;
   const typed = prompt('This permanently deletes all sessions, scans, and MI24 data for "' + label + '" ONLY (other outlets are untouched).\n\nType exactly to confirm:\n' + label);
   if (typed !== label) {
     alert("Text didn't match — nothing was deleted.");
