@@ -83,7 +83,7 @@
       <input type="text" id="staffname-input" placeholder="Enter your name..." maxlength="40"/>
 
       <label>Gondola ID</label>
-      <input type="text" id="gondola-input" placeholder="e.g. SM1, SM2, SM3..." maxlength="6" style="text-transform: uppercase;" oninput="this.value = this.value.toUpperCase()"/>
+      <input type="text" id="gondola-input" placeholder="e.g. SM1, SM2, SM3..." maxlength="8" style="text-transform: uppercase;" oninput="this.value = this.value.toUpperCase()"/>
 
       <button class="btn btn-outline" onclick="startGondolaCamera()" id="btn-gondola-camera">📷 Scan Gondola Barcode</button>
       <div id="gondola-video-container" style="display:none; margin-bottom:14px;">
@@ -235,7 +235,7 @@ async function checkAndStart() {
   if (!name) { alert("Please enter your name."); return; }
   if (!deptId) { alert("Please select a department."); return; }
   if (!gond) { alert("Please enter a Gondola ID."); return; }
-  if (gond.length > 6) { alert("Gondola ID cannot exceed 6 characters. Please check for a scanning or typing error."); return; }
+  if (gond.length > 8) { alert("Gondola ID cannot exceed 8 characters. Please check for a scanning or typing error."); return; }
   if (!outletId) { alert("⚠️ Outlet not set up correctly. Contact admin before continuing."); return; }
 
   var btnStart = document.getElementById("btn-start");
@@ -442,8 +442,8 @@ function startGondolaCamera() {
         gondolaCameraActive = false;
         var scannedValue = result.getText().trim().toUpperCase();
         stopGondolaCamera();
-        if (scannedValue.length > 6) {
-          alert("⚠️ Scanned code \"" + scannedValue + "\" is too long for a Gondola ID (max 6 characters). This looks like a product barcode, not a gondola label. Cuba scan betul2, hihi - shai.");
+        if (scannedValue.length > 8) {
+          alert("⚠️ Scanned code \"" + scannedValue + "\" is too long for a Gondola ID (max 8 characters). This looks like a product barcode, not a gondola label. Cuba scan betul2, hihi - shai.");
           return;
         }
         document.getElementById("gondola-input").value = scannedValue;
