@@ -148,6 +148,12 @@
       <select id="session-outlet-filter"><option value="">All outlets</option></select>
       <label>Department (filter)</label>
       <select id="session-dept-filter"><option value="">All departments</option></select>
+      <label>Print status (filter)</label>
+      <select id="session-print-filter">
+        <option value="">All</option>
+        <option value="unprinted">Not yet printed</option>
+        <option value="printed">Already printed</option>
+      </select>
       <div class="table-scroll"><table class="data-table" id="status-overview-table"></table></div>
     </div>
 
@@ -156,8 +162,14 @@
       <label>Session</label>
       <select id="session-select"><option>Loading...</option></select>
       <button class="btn btn-admin" onclick="loadCountSheet()">Load Zone Count Report</button>
-      <button class="btn btn-gray" onclick="window.print()">🖨️ Print</button>
+      <button class="btn btn-gray" onclick="printReport()">🖨️ Print</button>
       <div id="session-log"></div>
+    </div>
+
+    <div class="card">
+      <h2>✏️ Edit Counts (before reconciliation)</h2>
+      <p style="color:#666; font-size:13px; margin-bottom:10px">Correct a quantity after physical re-verification. Changes reflect in Reconciliation immediately — no extra step needed.</p>
+      <div class="table-scroll"><table class="data-table" id="edit-items-table"></table></div>
     </div>
   </div>
 
@@ -262,6 +274,7 @@ function initAdminPanel() {
     loadSessionsList();
     loadStatusOverview();
   });
+  document.getElementById("session-print-filter").addEventListener("change", loadStatusOverview);
 
   document.getElementById("sap-count-date").valueAsDate = new Date();
   loadSessionsList();
@@ -523,21 +536,24 @@ async function loadReconciliation() {
 async function loadStatusOverview() {
   const deptFilter = document.getElementById("session-dept-filter").value;
   const outletFilter = document.getElementById("session-outlet-filter").value;
+  const printFilter = document.getElementById("session-print-filter").value;
 
   let query = sb.from("session_summary").select("*").order("started_at", { ascending: false }).limit(100);
   if (deptFilter) query = query.eq("department_id", deptFilter);
   if (outletFilter) query = query.eq("outlet_id", outletFilter);
+  if (printFilter === "printed") query = query.not("printed_at", "is", null);
+  if (printFilter === "unprinted") query = query.is("printed_at", null);
 
   const { data, error } = await query;
   const table = document.getElementById("status-overview-table");
 
   if (error || !data || data.length === 0) {
-    table.innerHTML = "<tr><td style='padding:10px;color:#999'>No sessions yet.</td></tr>";
+    table.innerHTML = "<tr><td style='padding:10px;color:#999'>No sessions match this filter.</td></tr>";
     return;
   }
 
   const now = new Date();
-  table.innerHTML = "<tr><th>Gondola</th><th>Outlet</th><th>Department</th><th>Staff</th><th>Status</th><th>Items</th><th>Started</th></tr>" +
+  table.innerHTML = "<tr><th>Gondola</th><th>Outlet</th><th>Department</th><th>Staff</th><th>Status</th><th>Items</th><th>Started</th><th>Printed</th></tr>" +
     data.map(function(s) {
       const statusText = s.status.replace("_", " ").toUpperCase();
       const hoursOpen = (now - new Date(s.started_at)) / (1000 * 60 * 60);
@@ -546,8 +562,11 @@ async function loadStatusOverview() {
       const statusCell = stale
         ? "<span style='color:#e53935;font-weight:bold'>" + statusText + " ⚠️ " + Math.floor(hoursOpen) + "h open</span>"
         : statusText;
+      const printedCell = s.printed_at
+        ? "<span style='color:#155724'>✅ " + new Date(s.printed_at).toLocaleString() + "</span>"
+        : "<span style='color:#856404'>—</span>";
       return "<tr><td>" + s.gondola_id + "</td><td>" + s.outlet + "</td><td>" + s.department + "</td><td>" + (s.staff_name || "") + "</td><td>" +
-        statusCell + "</td><td>" + s.item_count + "</td><td>" + new Date(s.started_at).toLocaleString() + "</td></tr>";
+        statusCell + "</td><td>" + s.item_count + "</td><td>" + new Date(s.started_at).toLocaleString() + "</td><td>" + printedCell + "</td></tr>";
     }).join("");
 }
 
@@ -557,7 +576,7 @@ async function loadSessionsList() {
 
   let query = sb
     .from("gondola_sessions")
-    .select("id, gondola_id, staff_name, status, started_at, departments(name), outlets(name)")
+    .select("id, gondola_id, staff_name, status, started_at, printed_at, departments(name), outlets(name)")
     .order("started_at", { ascending: false })
     .limit(50);
 
@@ -569,10 +588,12 @@ async function loadSessionsList() {
   const sel = document.getElementById("session-select");
   if (error || !data || data.length === 0) { sel.innerHTML = '<option value="">No sessions found</option>'; return; }
   sel.innerHTML = data.map(s =>
-    '<option value="' + s.id + '">' + s.gondola_id + " — " + (s.outlets ? s.outlets.name : "?") + " — " + (s.departments ? s.departments.name : "?") +
+    '<option value="' + s.id + '">' + (s.printed_at ? "🖨️ " : "") + s.gondola_id + " — " + (s.outlets ? s.outlets.name : "?") + " — " + (s.departments ? s.departments.name : "?") +
     " (" + s.status.replace("_", " ").toUpperCase() + ", " + s.staff_name + ")</option>"
   ).join("");
 }
+
+let currentReportSessionId = null;
 
 async function loadCountSheet() {
   const sessionId = document.getElementById("session-select").value;
@@ -586,6 +607,8 @@ async function loadCountSheet() {
   const { data: items, error: iErr } = await sb.from("scan_items").select("*").eq("session_id", sessionId).order("material");
   if (iErr) { document.getElementById("session-log").innerHTML = "❌ Couldn't load items."; return; }
 
+  currentReportSessionId = sessionId;
+
   document.getElementById("ps-outlet").textContent = session.outlets ? session.outlets.name : "";
   document.getElementById("ps-dept").textContent = session.departments ? session.departments.name : "";
   document.getElementById("ps-gondola").textContent = session.gondola_id;
@@ -593,13 +616,76 @@ async function loadCountSheet() {
   document.getElementById("ps-status").textContent = session.status.replace("_", " ").toUpperCase();
   document.getElementById("ps-printed").textContent = new Date().toLocaleString();
 
+  renderPrintTable(items);
+  renderEditTable(items);
+
+  document.getElementById("session-log").innerHTML = "✅ Loaded " + items.length + " item(s). Click Print when ready, or correct a quantity below.";
+}
+
+function uomWithNumerator(uom, numerator) {
+  return uom + (numerator && numerator > 1 ? " (" + numerator + "'s)" : "");
+}
+
+function renderPrintTable(items) {
   const body = document.getElementById("ps-body");
   body.innerHTML = items.length === 0
     ? '<tr><td colspan="4" style="text-align:center;color:#999;padding:10px">No items scanned.</td></tr>'
     : items.map(it => "<tr><td style='border:1px solid #999;padding:3px 5px'>" + it.barcode + "</td><td style='border:1px solid #999;padding:3px 5px'>" + it.description +
-        "</td><td style='border:1px solid #999;padding:3px 5px'>" + it.uom + "</td><td style='border:1px solid #999;padding:3px 5px;text-align:right'>" + it.qty + "</td></tr>").join("");
+        "</td><td style='border:1px solid #999;padding:3px 5px'>" + uomWithNumerator(it.uom, it.numerator) + "</td><td style='border:1px solid #999;padding:3px 5px;text-align:right'>" + it.qty + "</td></tr>").join("");
+}
 
-  document.getElementById("session-log").innerHTML = "✅ Loaded " + items.length + " item(s). Click Print when ready.";
+function renderEditTable(items) {
+  const table = document.getElementById("edit-items-table");
+  if (items.length === 0) {
+    table.innerHTML = "<tr><td style='padding:10px;color:#999'>No items scanned yet.</td></tr>";
+    return;
+  }
+  table.innerHTML = "<tr><th>Barcode</th><th>Description</th><th>UOM</th><th>Qty</th><th></th></tr>" +
+    items.map(it =>
+      "<tr><td>" + it.barcode + "</td><td>" + it.description + "</td><td>" + uomWithNumerator(it.uom, it.numerator) + "</td>" +
+      "<td><input type='number' min='0' max='9999' value='" + it.qty + "' id='edit-qty-" + it.id + "' style='width:70px;padding:4px;margin:0'/></td>" +
+      "<td style='white-space:nowrap'>" +
+      "<button class='btn btn-admin' style='width:auto;padding:4px 10px;margin:0;font-size:12px' onclick='saveEditedQty(" + it.id + ")'>Save</button> " +
+      "<button class='btn btn-gray' style='width:auto;padding:4px 10px;margin:0;font-size:12px;background:#ea4335;color:white' onclick='deleteEditedItem(" + it.id + ")'>Delete</button>" +
+      "</td></tr>"
+    ).join("");
+}
+
+async function refreshCurrentReport() {
+  if (!currentReportSessionId) return;
+  const { data: items } = await sb.from("scan_items").select("*").eq("session_id", currentReportSessionId).order("material");
+  renderPrintTable(items || []);
+  renderEditTable(items || []);
+  loadStatusOverview(); // item counts may have changed
+}
+
+async function saveEditedQty(itemId) {
+  const input = document.getElementById("edit-qty-" + itemId);
+  const newQty = Number(input.value);
+  if (isNaN(newQty) || newQty < 0) { alert("Enter a valid quantity."); return; }
+
+  const { error } = await sb.from("scan_items").update({ qty: newQty, updated_at: new Date().toISOString() }).eq("id", itemId);
+  if (error) { alert("❌ " + error.message); return; }
+
+  await refreshCurrentReport();
+  document.getElementById("session-log").innerHTML = "✅ Quantity updated — reconciliation reflects this immediately.";
+}
+
+async function deleteEditedItem(itemId) {
+  if (!confirm("Delete this scanned item? This cannot be undone.")) return;
+
+  const { error } = await sb.from("scan_items").delete().eq("id", itemId);
+  if (error) { alert("❌ " + error.message); return; }
+
+  await refreshCurrentReport();
+  document.getElementById("session-log").innerHTML = "✅ Item deleted.";
+}
+
+function printReport() {
+  if (!currentReportSessionId) { alert("Load a report first."); return; }
+  window.print();
+  sb.from("gondola_sessions").update({ printed_at: new Date().toISOString() }).eq("id", currentReportSessionId)
+    .then(function() { loadSessionsList(); loadStatusOverview(); });
 }
 
 // ═══════════════════════════════════════════════════
@@ -695,7 +781,7 @@ async function clearDepartmentData() {
   const deptName = deptSel.options[deptSel.selectedIndex].text;
   if (!outletId || !deptId) return;
 
-  const label = outletName + " - " + deptName;
+  const label = outletName + " — " + deptName;
   const typed = prompt('This permanently deletes all sessions, scans, and MI24 data for "' + label + '" ONLY (other outlets are untouched).\n\nType exactly to confirm:\n' + label);
   if (typed !== label) {
     alert("Text didn't match — nothing was deleted.");
