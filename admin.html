@@ -772,6 +772,13 @@ async function previewClear() {
   document.getElementById("btn-clear-confirm").disabled = false;
 }
 
+function generateConfirmCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no O/0 or I/1 — avoids ambiguous characters
+  let code = "";
+  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
 async function clearDepartmentData() {
   const outletSel = document.getElementById("clear-outlet-select");
   const deptSel = document.getElementById("clear-dept-select");
@@ -782,9 +789,10 @@ async function clearDepartmentData() {
   if (!outletId || !deptId) return;
 
   const label = outletName + " — " + deptName;
-  const typed = prompt('This permanently deletes all sessions, scans, and MI24 data for "' + label + '" ONLY (other outlets are untouched).\n\nType exactly to confirm:\n' + label);
-  if (typed !== label) {
-    alert("Text didn't match — nothing was deleted.");
+  const code = generateConfirmCode();
+  const typed = prompt('This permanently deletes all sessions, scans, and MI24 data for "' + label + '" ONLY (other outlets are untouched).\n\nType this code to confirm: ' + code);
+  if (typed !== code) {
+    alert("Code didn't match — nothing was deleted.");
     return;
   }
 
