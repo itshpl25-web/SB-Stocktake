@@ -520,10 +520,70 @@ async function startSapImport() {
 // RECONCILIATION
 // ═══════════════════════════════════════════════════
 let currentReconTraceMap = {}; // material -> [{gondola_id, qty, scanned_at}, ...], from the last Load Report
+let currentReconRows = [];     // raw rows from the last Load Report — kept so sorting doesn't need a re-fetch
+let currentReconSort = { key: "material", dir: 1 }; // dir: 1 = ascending, -1 = descending
 
 function buildTraceSummary(rows) {
   if (!rows || rows.length === 0) return "—";
   return rows.map(function(r) { return r.gondola_id + ": " + r.qty; }).join(", ");
+}
+
+// Variance is computed on the fly (not stored), so both the cell display and sorting share this one definition.
+function computeVariance(r) {
+  const hasBook = r.book_quantity !== null && r.book_quantity !== undefined;
+  return hasBook ? (Number(r.qty_counted) - Number(r.book_quantity)) : null;
+}
+
+// Column definitions: 'get' returns the raw value used for sorting (numbers sort as numbers, not text).
+// Columns without a 'get' (Gondola Trace, the action button) aren't sortable — there's no single sensible order for a list of scans.
+const RECON_COLUMNS = [
+  { key: "material",     label: "Material",      get: r => r.material || "" },
+  { key: "description",  label: "Description",   get: r => r.description || "" },
+  { key: "book_quantity",label: "Book Qty",       get: r => r.book_quantity === null || r.book_quantity === undefined ? -Infinity : Number(r.book_quantity) },
+  { key: "qty_counted",  label: "Qty Counted",    get: r => Number(r.qty_counted) || 0 },
+  { key: "variance",     label: "Variance",       get: r => { const v = computeVariance(r); return v === null ? -Infinity : v; } },
+  { key: "zero_count",   label: "Zero",           get: r => r.zero_count === "X" ? 1 : 0 },
+  { key: "trace",        label: "Gondola Trace",  get: null },
+  { key: "action",       label: "",               get: null }
+];
+
+function sortReconTable(key) {
+  if (currentReconSort.key === key) {
+    currentReconSort.dir *= -1; // clicking the same header again flips direction
+  } else {
+    currentReconSort = { key: key, dir: 1 };
+  }
+  renderReconTable();
+}
+
+function renderReconTable() {
+  const col = RECON_COLUMNS.find(c => c.key === currentReconSort.key);
+  const sorted = currentReconRows.slice();
+  if (col && col.get) {
+    sorted.sort(function(a, b) {
+      const va = col.get(a), vb = col.get(b);
+      if (va < vb) return -1 * currentReconSort.dir;
+      if (va > vb) return 1 * currentReconSort.dir;
+      return 0;
+    });
+  }
+
+  const headerHtml = "<tr>" + RECON_COLUMNS.map(function(c) {
+    if (!c.get) return "<th>" + c.label + "</th>"; // not sortable
+    const arrow = currentReconSort.key === c.key ? (currentReconSort.dir === 1 ? " ▲" : " ▼") : "";
+    return "<th style='cursor:pointer;user-select:none' onclick=\"sortReconTable('" + c.key + "')\">" + c.label + arrow + "</th>";
+  }).join("") + "</tr>";
+
+  const bodyHtml = sorted.map(function(r) {
+    const variance = computeVariance(r);
+    const varianceCell = variance === null ? "—" : (variance === 0 ? "<span style='color:#155724'>0</span>" : "<span style='color:#721c24;font-weight:bold'>" + (variance > 0 ? "+" : "") + variance + "</span>");
+    const rows = currentReconTraceMap[r.material];
+    return "<tr><td>" + r.material + "</td><td>" + (r.description||"") + "</td><td>" + (r.book_quantity ?? "") + "</td><td>" + r.qty_counted + "</td><td>" + varianceCell + "</td><td>" + r.zero_count +
+      "</td><td class='trace-cell'>" + buildTraceSummary(rows) + "</td>" +
+      "<td><button class='btn btn-gray' style='width:auto;padding:6px 10px;margin:0;font-size:11px' onclick=\"traceMaterial('" + r.material.replace(/'/g,"\\'") + "', '" + (r.description||"").replace(/'/g,"\\'") + "')\">🔍</button></td></tr>";
+  }).join("");
+
+  document.getElementById("recon-table").innerHTML = headerHtml + bodyHtml;
 }
 
 async function loadReconciliation() {
@@ -546,6 +606,9 @@ async function loadReconciliation() {
     });
   }
 
+  currentReconRows = data;
+  currentReconSort = { key: "material", dir: 1 }; // reset to default sort on every fresh Load Report
+
   const totalLines = data.length;
   const totalQty = data.reduce((s, r) => s + (Number(r.qty_counted) || 0), 0);
   const zeroCount = data.filter(r => r.zero_count === "X").length;
@@ -556,17 +619,7 @@ async function loadReconciliation() {
   summary.innerHTML = "<b>" + totalLines + "</b> materials · <b>" + totalQty + "</b> total qty counted · <b>" + zeroCount + "</b> still at zero" +
     (looksUninitialized ? "<br/><span style='color:#856404'>⚠️ Book quantities all look empty — this is likely the pre-SAP-posting upload. Variance below won't be meaningful until you re-upload MI24 with real book qty (step 8).</span>" : "");
 
-  const table = document.getElementById("recon-table");
-  table.innerHTML = "<tr><th>Material</th><th>Description</th><th>Book Qty</th><th>Qty Counted</th><th>Variance</th><th>Zero</th><th>Gondola Trace</th><th></th></tr>" +
-    data.map(function(r) {
-      const hasBook = r.book_quantity !== null && r.book_quantity !== undefined;
-      const variance = hasBook ? (Number(r.qty_counted) - Number(r.book_quantity)) : null;
-      const varianceCell = variance === null ? "—" : (variance === 0 ? "<span style='color:#155724'>0</span>" : "<span style='color:#721c24;font-weight:bold'>" + (variance > 0 ? "+" : "") + variance + "</span>");
-      const rows = currentReconTraceMap[r.material];
-      return "<tr><td>" + r.material + "</td><td>" + (r.description||"") + "</td><td>" + (r.book_quantity ?? "") + "</td><td>" + r.qty_counted + "</td><td>" + varianceCell + "</td><td>" + r.zero_count +
-        "</td><td class='trace-cell'>" + buildTraceSummary(rows) + "</td>" +
-        "<td><button class='btn btn-gray' style='width:auto;padding:6px 10px;margin:0;font-size:11px' onclick=\"traceMaterial('" + r.material.replace(/'/g,"\\'") + "', '" + (r.description||"").replace(/'/g,"\\'") + "')\">🔍</button></td></tr>";
-    }).join("");
+  renderReconTable();
 
   const { data: unmatched } = await sb.from("unmatched_scans").select("*").eq("department_id", deptId).eq("outlet_id", outletId).order("material");
   const utable = document.getElementById("unmatched-table");
