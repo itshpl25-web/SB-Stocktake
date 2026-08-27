@@ -56,6 +56,7 @@
     .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
     .modal-header h2 { font-size: 16px; color: #444; }
     .modal-close { background: none; border: none; font-size: 18px; cursor: pointer; color: #888; width: auto; padding: 4px 8px; margin: 0; }
+    .trace-cell { max-width: 220px; white-space: normal; word-break: break-word; font-size: 11px; color: #555; }
 
     #print-sheet { display: none; }
     @media print {
@@ -88,8 +89,8 @@
 
   <div class="nav-tabs">
     <button class="nav-tab active" onclick="showSection('uploads')">📂 Uploads</button>
-    <button class="nav-tab" onclick="showSection('reconciliation')">📊 Reconciliation</button>
     <button class="nav-tab" onclick="showSection('sessions')">📋 Sessions</button>
+    <button class="nav-tab" onclick="showSection('reconciliation')">📊 Reconciliation</button>
     <button class="nav-tab" onclick="showSection('export')">📤 Export</button>
     <button class="nav-tab" onclick="showSection('clear')">🧹 Clear</button>
   </div>
@@ -128,25 +129,6 @@
 
   </div>
 
-  <!-- ═══════════ RECONCILIATION ═══════════ -->
-  <div class="section-panel" id="section-reconciliation">
-    <div class="card">
-      <h2>📊 Live Reconciliation Report</h2>
-      <label>Outlet</label>
-      <select id="recon-outlet-select"><option>Loading...</option></select>
-      <label>Department</label>
-      <select id="recon-dept-select"><option>Loading...</option></select>
-      <button class="btn btn-admin" onclick="loadReconciliation()">Load Report</button>
-      <div id="recon-summary" class="summary-box hidden"></div>
-      <div class="table-scroll"><table class="data-table" id="recon-table"></table></div>
-    </div>
-    <div class="card">
-      <h2>⚠️ Missing Material in PID</h2>
-      <p style="color:#666; font-size:13px; margin-bottom:10px">Items scanned that don't appear in the uploaded MI24 for this outlet + department.</p>
-      <div class="table-scroll"><table class="data-table" id="unmatched-table"></table></div>
-    </div>
-  </div>
-
   <!-- ═══════════ SESSIONS ═══════════ -->
   <div class="section-panel" id="section-sessions">
     <div class="card">
@@ -177,6 +159,25 @@
       <h2>✏️ Edit Counts (before reconciliation)</h2>
       <p style="color:#666; font-size:13px; margin-bottom:10px">Correct a quantity after physical re-verification. Changes reflect in Reconciliation immediately — no extra step needed.</p>
       <div class="table-scroll"><table class="data-table" id="edit-items-table"></table></div>
+    </div>
+  </div>
+
+  <!-- ═══════════ RECONCILIATION ═══════════ -->
+  <div class="section-panel" id="section-reconciliation">
+    <div class="card">
+      <h2>📊 Live Reconciliation Report</h2>
+      <label>Outlet</label>
+      <select id="recon-outlet-select"><option>Loading...</option></select>
+      <label>Department</label>
+      <select id="recon-dept-select"><option>Loading...</option></select>
+      <button class="btn btn-admin" onclick="loadReconciliation()">Load Report</button>
+      <div id="recon-summary" class="summary-box hidden"></div>
+      <div class="table-scroll"><table class="data-table" id="recon-table"></table></div>
+    </div>
+    <div class="card">
+      <h2>⚠️ Missing Material in PID</h2>
+      <p style="color:#666; font-size:13px; margin-bottom:10px">Items scanned that don't appear in the uploaded MI24 for this outlet + department.</p>
+      <div class="table-scroll"><table class="data-table" id="unmatched-table"></table></div>
     </div>
   </div>
 
@@ -518,29 +519,54 @@ async function startSapImport() {
 // ═══════════════════════════════════════════════════
 // RECONCILIATION
 // ═══════════════════════════════════════════════════
-let currentReconOutletId = null;
+let currentReconTraceMap = {}; // material -> [{gondola_id, qty, scanned_at}, ...], from the last Load Report
+
+function buildTraceSummary(rows) {
+  if (!rows || rows.length === 0) return "—";
+  return rows.map(function(r) { return r.gondola_id + ": " + r.qty; }).join(", ");
+}
 
 async function loadReconciliation() {
   const outletId = document.getElementById("recon-outlet-select").value;
   const deptId = document.getElementById("recon-dept-select").value;
   if (!outletId) { alert("Select an outlet."); return; }
   if (!deptId) { alert("Select a department."); return; }
-  currentReconOutletId = outletId;
 
   const { data, error } = await sb.from("reconciliation").select("*").eq("department_id", deptId).eq("outlet_id", outletId).order("material");
   if (error) { alert("❌ " + error.message); return; }
 
+  // One batched call for every material's gondola-level scan breakdown in this department + outlet —
+  // avoids firing a separate query per row, which would be slow for departments with many materials.
+  const { data: traceRows, error: traceErr } = await sb.rpc("department_scan_trace", { p_department_id: deptId, p_outlet_id: outletId });
+  currentReconTraceMap = {};
+  if (!traceErr && traceRows) {
+    traceRows.forEach(function(r) {
+      if (!currentReconTraceMap[r.material]) currentReconTraceMap[r.material] = [];
+      currentReconTraceMap[r.material].push(r);
+    });
+  }
+
   const totalLines = data.length;
   const totalQty = data.reduce((s, r) => s + (Number(r.qty_counted) || 0), 0);
   const zeroCount = data.filter(r => r.zero_count === "X").length;
+  const looksUninitialized = data.length > 0 && data.every(r => !r.book_quantity);
+
   const summary = document.getElementById("recon-summary");
   summary.classList.remove("hidden");
-  summary.innerHTML = "<b>" + totalLines + "</b> materials · <b>" + totalQty + "</b> total qty counted · <b>" + zeroCount + "</b> still at zero";
+  summary.innerHTML = "<b>" + totalLines + "</b> materials · <b>" + totalQty + "</b> total qty counted · <b>" + zeroCount + "</b> still at zero" +
+    (looksUninitialized ? "<br/><span style='color:#856404'>⚠️ Book quantities all look empty — this is likely the pre-SAP-posting upload. Variance below won't be meaningful until you re-upload MI24 with real book qty (step 8).</span>" : "");
 
   const table = document.getElementById("recon-table");
-  table.innerHTML = "<tr><th>Material</th><th>Description</th><th>Book Qty</th><th>Qty Counted</th><th>Zero</th><th></th></tr>" +
-    data.map(r => "<tr><td>" + r.material + "</td><td>" + (r.description||"") + "</td><td>" + (r.book_quantity ?? "") + "</td><td>" + r.qty_counted + "</td><td>" + r.zero_count +
-      "</td><td><button class='btn btn-gray' style='width:auto;padding:6px 12px;margin:0;font-size:11px' onclick=\"traceMaterial('" + r.material.replace(/'/g,"\\'") + "', '" + (r.description||"").replace(/'/g,"\\'") + "')\">🔍 Trace</button></td></tr>").join("");
+  table.innerHTML = "<tr><th>Material</th><th>Description</th><th>Book Qty</th><th>Qty Counted</th><th>Variance</th><th>Zero</th><th>Gondola Trace</th><th></th></tr>" +
+    data.map(function(r) {
+      const hasBook = r.book_quantity !== null && r.book_quantity !== undefined;
+      const variance = hasBook ? (Number(r.qty_counted) - Number(r.book_quantity)) : null;
+      const varianceCell = variance === null ? "—" : (variance === 0 ? "<span style='color:#155724'>0</span>" : "<span style='color:#721c24;font-weight:bold'>" + (variance > 0 ? "+" : "") + variance + "</span>");
+      const rows = currentReconTraceMap[r.material];
+      return "<tr><td>" + r.material + "</td><td>" + (r.description||"") + "</td><td>" + (r.book_quantity ?? "") + "</td><td>" + r.qty_counted + "</td><td>" + varianceCell + "</td><td>" + r.zero_count +
+        "</td><td class='trace-cell'>" + buildTraceSummary(rows) + "</td>" +
+        "<td><button class='btn btn-gray' style='width:auto;padding:6px 10px;margin:0;font-size:11px' onclick=\"traceMaterial('" + r.material.replace(/'/g,"\\'") + "', '" + (r.description||"").replace(/'/g,"\\'") + "')\">🔍</button></td></tr>";
+    }).join("");
 
   const { data: unmatched } = await sb.from("unmatched_scans").select("*").eq("department_id", deptId).eq("outlet_id", outletId).order("material");
   const utable = document.getElementById("unmatched-table");
@@ -554,30 +580,22 @@ async function loadReconciliation() {
 
 // ═══════════════════════════════════════════════════
 // SCAN TRACE (drill-down: which gondola scans made up this qty)
+// Reads from currentReconTraceMap, already fetched by loadReconciliation — no extra network call.
 // ═══════════════════════════════════════════════════
-async function traceMaterial(material, description) {
-  if (!currentReconOutletId) return;
-
+function traceMaterial(material, description) {
   document.getElementById("trace-modal-title").textContent = "Scan trace — " + material + (description ? " (" + description + ")" : "");
   const table = document.getElementById("trace-table");
-  table.innerHTML = "<tr><td style='padding:10px;color:#999'>Loading...</td></tr>";
-  document.getElementById("trace-modal-overlay").classList.remove("hidden");
+  const rows = currentReconTraceMap[material];
 
-  const { data, error } = await sb.rpc("scan_trace", { p_material: material, p_outlet_id: currentReconOutletId });
-
-  if (error) {
-    table.innerHTML = "<tr><td style='padding:10px;color:#721c24'>❌ " + error.message + "</td></tr>";
-    return;
-  }
-  if (!data || data.length === 0) {
+  if (!rows || rows.length === 0) {
     table.innerHTML = "<tr><td style='padding:10px;color:#999'>No scans found for this material.</td></tr>";
-    return;
+  } else {
+    table.innerHTML = "<tr><th>Gondola</th><th>Qty</th><th>Scanned At</th></tr>" +
+      rows.map(function(r) {
+        return "<tr><td>" + r.gondola_id + "</td><td>" + r.qty + "</td><td>" + new Date(r.scanned_at).toLocaleString() + "</td></tr>";
+      }).join("");
   }
-
-  table.innerHTML = "<tr><th>Gondola</th><th>Qty</th><th>Scanned At</th></tr>" +
-    data.map(function(r) {
-      return "<tr><td>" + r.gondola_id + "</td><td>" + r.qty + "</td><td>" + new Date(r.scanned_at).toLocaleString() + "</td></tr>";
-    }).join("");
+  document.getElementById("trace-modal-overlay").classList.remove("hidden");
 }
 
 function closeTraceModal() {
