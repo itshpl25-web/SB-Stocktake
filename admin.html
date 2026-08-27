@@ -341,6 +341,10 @@ let extractedMasterRows = [];
 
 document.getElementById("master-dept-select").addEventListener("change", function() {
   document.getElementById("master-dept-new").style.display = this.value === "__new__" ? "block" : "none";
+  if (extractedMasterRows.length > 0) previewMasterChanges();
+});
+document.getElementById("master-dept-new").addEventListener("input", function() {
+  if (extractedMasterRows.length > 0 && document.getElementById("master-dept-select").value === "__new__") previewMasterChanges();
 });
 document.getElementById("master-file-input").addEventListener("change", function(e) {
   if (e.target.files[0]) handleMasterFile(e.target.files[0]);
@@ -377,11 +381,108 @@ function handleMasterFile(file) {
       };
     }
     extractedMasterRows = Object.values(seen);
-    document.getElementById("master-preview-info").textContent = extractedMasterRows.length + " rows ready.";
     logTo("master-log", "✅ Parsed " + extractedMasterRows.length + " unique-barcode rows.", "ok");
-    document.getElementById("btn-master-upload").disabled = false;
+    document.getElementById("btn-master-upload").disabled = true; // stays disabled until the change check below finishes
+    previewMasterChanges();
   };
   reader.readAsArrayBuffer(file);
+}
+
+// ── SAFEGUARD: show exactly what will change before any upsert happens ──
+async function previewMasterChanges() {
+  const infoEl = document.getElementById("master-preview-info");
+  const deptSelect = document.getElementById("master-dept-select");
+  const deptId = deptSelect.value;
+
+  if (!deptId) {
+    infoEl.innerHTML = extractedMasterRows.length + " rows parsed. <span style='color:#856404'>Select a department to check for changes.</span>";
+    document.getElementById("btn-master-upload").disabled = true;
+    return;
+  }
+
+  const targetDeptName = deptId === "__new__"
+    ? (document.getElementById("master-dept-new").value.trim() || "(new department — name it above)")
+    : deptSelect.options[deptSelect.selectedIndex].text;
+
+  infoEl.innerHTML = "🔍 Checking " + extractedMasterRows.length + " barcode(s) against existing data...";
+
+  // Department names, fetched once, so a department-change warning can show a readable name instead of just an id.
+  const { data: deptRows } = await sb.from("departments").select("id, name");
+  const deptNameById = {};
+  (deptRows || []).forEach(function(d) { deptNameById[d.id] = d.name; });
+
+  // Look up existing products for these barcodes, in chunks — the file can contain more barcodes than
+  // a single .in() query comfortably handles.
+  const barcodes = extractedMasterRows.map(function(r) { return r.barcode; });
+  const existingByBarcode = {};
+  const lookupChunkSize = 300;
+  for (let i = 0; i < barcodes.length; i += lookupChunkSize) {
+    const chunk = barcodes.slice(i, i + lookupChunkSize);
+    const { data: existing, error } = await sb.from("products")
+      .select("barcode, material, description, material_group, uom, numerator, department_id")
+      .in("barcode", chunk);
+    if (error) {
+      infoEl.innerHTML = "❌ Couldn't check existing data: " + error.message;
+      return;
+    }
+    (existing || []).forEach(function(p) { existingByBarcode[p.barcode] = p; });
+  }
+
+  const FIELD_LABELS = { material: "Material Code", description: "Description", material_group: "Material Group", uom: "UOM", numerator: "Numerator" };
+  let newCount = 0, unchangedCount = 0, updatedCount = 0, deptChangeCount = 0;
+  const changeRows = [];
+
+  extractedMasterRows.forEach(function(r) {
+    const existing = existingByBarcode[r.barcode];
+    if (!existing) { newCount++; return; }
+
+    const fieldChanges = [];
+    ["material", "description", "material_group", "uom"].forEach(function(f) {
+      const oldVal = (existing[f] || "").toString().trim();
+      const newVal = (r[f] || "").toString().trim();
+      if (oldVal !== newVal) fieldChanges.push({ field: FIELD_LABELS[f], old: oldVal || "(blank)", new: newVal || "(blank)" });
+    });
+    if (Number(existing.numerator) !== Number(r.numerator)) {
+      fieldChanges.push({ field: FIELD_LABELS.numerator, old: existing.numerator, new: r.numerator });
+    }
+
+    // A brand-new department is always a "move" for any barcode that already exists somewhere else.
+    const movingToNewDept = deptId === "__new__";
+    const deptChanged = !movingToNewDept && String(existing.department_id) !== String(deptId);
+
+    if (deptChanged || movingToNewDept) {
+      deptChangeCount++;
+      fieldChanges.push({ field: "Department", old: deptNameById[existing.department_id] || "?", new: targetDeptName });
+    }
+
+    if (fieldChanges.length > 0) {
+      updatedCount++;
+      changeRows.push({ barcode: r.barcode, description: r.description, changes: fieldChanges, deptChanged: deptChanged || movingToNewDept });
+    } else {
+      unchangedCount++;
+    }
+  });
+
+  let html = "<b>" + newCount + "</b> new barcode(s) · <b>" + updatedCount + "</b> will change · <b>" + unchangedCount + "</b> unchanged";
+  if (deptChangeCount > 0) {
+    html += "<br/><span style='color:#e53935;font-weight:bold'>⚠️ " + deptChangeCount + " barcode(s) will move to a different department — review these before uploading.</span>";
+  }
+
+  if (changeRows.length > 0) {
+    html += "<div class='table-scroll' style='max-height:250px;margin-top:10px'><table class='data-table'>" +
+      "<tr><th>Barcode</th><th>Description</th><th>Change</th></tr>" +
+      changeRows.map(function(cr) {
+        const changeText = cr.changes.map(function(c) {
+          const style = c.field === "Department" ? "color:#e53935;font-weight:bold" : "";
+          return "<div style='" + style + "'>" + c.field + ": " + c.old + " → " + c.new + "</div>";
+        }).join("");
+        return "<tr" + (cr.deptChanged ? " style='background:#fff5f5'" : "") + "><td>" + cr.barcode + "</td><td>" + (cr.description||"") + "</td><td>" + changeText + "</td></tr>";
+      }).join("") +
+      "</table></div>";
+  }
+
+  infoEl.innerHTML = extractedMasterRows.length + " rows parsed.<br/>" + html;
+  document.getElementById("btn-master-upload").disabled = false;
 }
 
 async function startMasterImport() {
