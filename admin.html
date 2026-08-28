@@ -173,6 +173,7 @@
       <button class="btn btn-admin" onclick="loadReconciliation()">Load Report</button>
       <div id="recon-summary" class="summary-box hidden"></div>
       <div class="table-scroll"><table class="data-table" id="recon-table"></table></div>
+      <button class="btn btn-gray" style="margin-top:12px" onclick="exportReconciliationExcel()">⬇ Export to Excel (barcode included)</button>
     </div>
     <div class="card">
       <h2>⚠️ Missing Material in PID</h2>
@@ -620,8 +621,9 @@ async function startSapImport() {
 // ═══════════════════════════════════════════════════
 // RECONCILIATION
 // ═══════════════════════════════════════════════════
-let currentReconTraceMap = {}; // material -> [{gondola_id, qty, scanned_at}, ...], from the last Load Report
-let currentReconRows = [];     // raw rows from the last Load Report — kept so sorting doesn't need a re-fetch
+let currentReconTraceMap = {};   // material -> [{gondola_id, qty, scanned_at}, ...], from the last Load Report
+let currentReconBarcodeMap = {}; // material -> barcode, from the last Load Report
+let currentReconRows = [];       // raw rows from the last Load Report — kept so sorting/exporting don't need a re-fetch
 let currentReconSort = { key: "material", dir: 1 }; // dir: 1 = ascending, -1 = descending
 
 function buildTraceSummary(rows) {
@@ -638,6 +640,7 @@ function computeVariance(r) {
 // Column definitions: 'get' returns the raw value used for sorting (numbers sort as numbers, not text).
 // Columns without a 'get' (Gondola Trace, the action button) aren't sortable — there's no single sensible order for a list of scans.
 const RECON_COLUMNS = [
+  { key: "barcode",      label: "Barcode",       get: r => currentReconBarcodeMap[r.material] || "" },
   { key: "material",     label: "Material",      get: r => r.material || "" },
   { key: "description",  label: "Description",   get: r => r.description || "" },
   { key: "book_quantity",label: "Book Qty",       get: r => r.book_quantity === null || r.book_quantity === undefined ? -Infinity : Number(r.book_quantity) },
@@ -657,7 +660,9 @@ function sortReconTable(key) {
   renderReconTable();
 }
 
-function renderReconTable() {
+// Shared by both on-screen rendering and the Excel export, so the exported file always matches
+// whatever order is currently on screen (e.g. sorted by Variance to hand to a supervisor).
+function getSortedReconRows() {
   const col = RECON_COLUMNS.find(c => c.key === currentReconSort.key);
   const sorted = currentReconRows.slice();
   if (col && col.get) {
@@ -668,6 +673,11 @@ function renderReconTable() {
       return 0;
     });
   }
+  return sorted;
+}
+
+function renderReconTable() {
+  const sorted = getSortedReconRows();
 
   const headerHtml = "<tr>" + RECON_COLUMNS.map(function(c) {
     if (!c.get) return "<th>" + c.label + "</th>"; // not sortable
@@ -679,12 +689,45 @@ function renderReconTable() {
     const variance = computeVariance(r);
     const varianceCell = variance === null ? "—" : (variance === 0 ? "<span style='color:#155724'>0</span>" : "<span style='color:#721c24;font-weight:bold'>" + (variance > 0 ? "+" : "") + variance + "</span>");
     const rows = currentReconTraceMap[r.material];
-    return "<tr><td>" + r.material + "</td><td>" + (r.description||"") + "</td><td>" + (r.book_quantity ?? "") + "</td><td>" + r.qty_counted + "</td><td>" + varianceCell + "</td><td>" + r.zero_count +
+    const barcode = currentReconBarcodeMap[r.material] || "";
+    return "<tr><td>" + barcode + "</td><td>" + r.material + "</td><td>" + (r.description||"") + "</td><td>" + (r.book_quantity ?? "") + "</td><td>" + r.qty_counted + "</td><td>" + varianceCell + "</td><td>" + r.zero_count +
       "</td><td class='trace-cell'>" + buildTraceSummary(rows) + "</td>" +
       "<td><button class='btn btn-gray' style='width:auto;padding:6px 10px;margin:0;font-size:11px' onclick=\"traceMaterial('" + r.material.replace(/'/g,"\\'") + "', '" + (r.description||"").replace(/'/g,"\\'") + "')\">🔍</button></td></tr>";
   }).join("");
 
   document.getElementById("recon-table").innerHTML = headerHtml + bodyHtml;
+}
+
+function exportReconciliationExcel() {
+  if (currentReconRows.length === 0) { alert("Load a report first."); return; }
+
+  const outletSel = document.getElementById("recon-outlet-select");
+  const deptSel = document.getElementById("recon-dept-select");
+  const outletName = outletSel.options[outletSel.selectedIndex].text;
+  const deptName = deptSel.options[deptSel.selectedIndex].text;
+
+  const sorted = getSortedReconRows(); // respects whatever sort is currently on screen
+
+  const sheetData = sorted.map(function(r) {
+    const variance = computeVariance(r);
+    const rows = currentReconTraceMap[r.material];
+    return {
+      "Barcode": currentReconBarcodeMap[r.material] || "",
+      "Material": r.material,
+      "Description": r.description || "",
+      "Book Qty": r.book_quantity ?? "",
+      "Qty Counted": r.qty_counted,
+      "Variance": variance === null ? "" : variance,
+      "Zero Count": r.zero_count,
+      "Gondola Trace": buildTraceSummary(rows)
+    };
+  });
+
+  const headers = ["Barcode", "Material", "Description", "Book Qty", "Qty Counted", "Variance", "Zero Count", "Gondola Trace"];
+  const ws = XLSX.utils.json_to_sheet(sheetData, { header: headers });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Reconciliation");
+  XLSX.writeFile(wb, "Reconciliation_" + outletName.replace(/\s+/g, "_") + "_" + deptName.replace(/\s+/g, "_") + "_" + new Date().toISOString().slice(0, 10) + ".xlsx");
 }
 
 async function loadReconciliation() {
@@ -705,6 +748,14 @@ async function loadReconciliation() {
       if (!currentReconTraceMap[r.material]) currentReconTraceMap[r.material] = [];
       currentReconTraceMap[r.material].push(r);
     });
+  }
+
+  // Barcode comes from products (master data), scoped to this department — reconciliation itself is grouped
+  // by material and doesn't carry barcode, so this is a separate lookup merged in by material code.
+  const { data: productRows, error: prodErr } = await sb.from("products").select("barcode, material").eq("department_id", deptId);
+  currentReconBarcodeMap = {};
+  if (!prodErr && productRows) {
+    productRows.forEach(function(p) { currentReconBarcodeMap[p.material] = p.barcode; });
   }
 
   currentReconRows = data;
