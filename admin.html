@@ -132,6 +132,7 @@
   <div class="section-panel" id="section-sessions">
     <div class="card">
       <h2>📊 Gondola Status Overview</h2>
+      <button class="btn btn-gray" onclick="refreshSessionsTab()" id="btn-refresh-sessions">🔄 Refresh</button>
       <label>Outlet (filter)</label>
       <select id="session-outlet-filter"><option value="">All outlets</option></select>
       <label>Department (filter)</label>
@@ -627,6 +628,36 @@ let currentReconBarcodeMap = {}; // material -> barcode, from the last Load Repo
 let currentReconRows = [];       // raw rows from the last Load Report — kept so sorting/exporting don't need a re-fetch
 let currentReconSort = { key: "material", dir: 1 }; // dir: 1 = ascending, -1 = descending
 
+// Variance is computed on the fly (not stored), so both the cell display and sorting share this one definition.
+function computeVariance(r) {
+  const hasBook = r.book_quantity !== null && r.book_quantity !== undefined;
+  return hasBook ? (Number(r.qty_counted) - Number(r.book_quantity)) : null;
+}
+
+// Column definitions match the physical SAP MI24 document template exactly (same column order and
+// labels as the working paper), with Var Qty / Barcode / Gondola Trace appended at the end — the same
+// three columns highlighted as additions in that template. 'get' returns the raw value used for sorting.
+// Columns without a 'get' (Gondola Trace, the action button) aren't sortable.
+const RECON_COLUMNS = [
+  { key: "phys_inventory_doc", label: "Phys. Inventory Doc.",   get: r => r.phys_inventory_doc || "" },
+  { key: "item",                label: "Item",                   get: r => Number(r.item) || 0 },
+  { key: "material",            label: "Material",               get: r => r.material || "" },
+  { key: "description",         label: "Material Description",   get: r => r.description || "" },
+  { key: "batch",                label: "Batch",                  get: r => r.batch || "" },
+  { key: "plant",                label: "Plant",                  get: r => r.plant || "" },
+  { key: "storage_location",    label: "Storage location",       get: r => r.storage_location || "" },
+  { key: "special_stock",       label: "Special Stock",          get: r => r.special_stock || "" },
+  { key: "count_date",          label: "Count Date",             get: r => r.count_date || "" },
+  { key: "qty_counted",         label: "Qty Counted",            get: r => Number(r.qty_counted) || 0 },
+  { key: "base_uom",            label: "Base Unit of Measure",   get: r => r.base_uom || "" },
+  { key: "book_quantity",       label: "Book Quantity",          get: r => r.book_quantity === null || r.book_quantity === undefined ? -Infinity : Number(r.book_quantity) },
+  { key: "zero_count",          label: "Zero Count",             get: r => r.zero_count === "X" ? 1 : 0 },
+  { key: "variance",            label: "Var Qty",                get: r => { const v = computeVariance(r); return v === null ? -Infinity : v; } },
+  { key: "barcode",             label: "Barcode",                get: r => currentReconBarcodeMap[r.material] || "" },
+  { key: "trace",                label: "Gondola Trace",          get: null },
+  { key: "action",               label: "",                        get: null }
+];
+
 // Inline summary: one line per gondola, summed — a quick "how much from where" glance.
 // This is deliberately different from the 🔍 modal, which lists every individual scan unsummed with
 // timestamps — that's where a genuine discrepancy actually gets investigated. Summing here just keeps
@@ -648,26 +679,6 @@ function buildTraceSummary(rows) {
   }).join(", ");
 }
 
-// Variance is computed on the fly (not stored), so both the cell display and sorting share this one definition.
-function computeVariance(r) {
-  const hasBook = r.book_quantity !== null && r.book_quantity !== undefined;
-  return hasBook ? (Number(r.qty_counted) - Number(r.book_quantity)) : null;
-}
-
-// Column definitions: 'get' returns the raw value used for sorting (numbers sort as numbers, not text).
-// Columns without a 'get' (Gondola Trace, the action button) aren't sortable — there's no single sensible order for a list of scans.
-const RECON_COLUMNS = [
-  { key: "barcode",      label: "Barcode",       get: r => currentReconBarcodeMap[r.material] || "" },
-  { key: "material",     label: "Material",      get: r => r.material || "" },
-  { key: "description",  label: "Description",   get: r => r.description || "" },
-  { key: "book_quantity",label: "Book Qty",       get: r => r.book_quantity === null || r.book_quantity === undefined ? -Infinity : Number(r.book_quantity) },
-  { key: "qty_counted",  label: "Qty Counted",    get: r => Number(r.qty_counted) || 0 },
-  { key: "variance",     label: "Variance",       get: r => { const v = computeVariance(r); return v === null ? -Infinity : v; } },
-  { key: "zero_count",   label: "Zero",           get: r => r.zero_count === "X" ? 1 : 0 },
-  { key: "trace",        label: "Gondola Trace",  get: null },
-  { key: "action",       label: "",               get: null }
-];
-
 function sortReconTable(key) {
   if (currentReconSort.key === key) {
     currentReconSort.dir *= -1; // clicking the same header again flips direction
@@ -678,7 +689,7 @@ function sortReconTable(key) {
 }
 
 // Shared by both on-screen rendering and the Excel export, so the exported file always matches
-// whatever order is currently on screen (e.g. sorted by Variance to hand to a supervisor).
+// whatever order is currently on screen (e.g. sorted by Var Qty to hand to a supervisor).
 function getSortedReconRows() {
   const col = RECON_COLUMNS.find(c => c.key === currentReconSort.key);
   const sorted = currentReconRows.slice();
@@ -699,7 +710,7 @@ function renderReconTable() {
   const headerHtml = "<tr>" + RECON_COLUMNS.map(function(c) {
     if (!c.get) return "<th>" + c.label + "</th>"; // not sortable
     const arrow = currentReconSort.key === c.key ? (currentReconSort.dir === 1 ? " ▲" : " ▼") : "";
-    return "<th style='cursor:pointer;user-select:none' onclick=\"sortReconTable('" + c.key + "')\">" + c.label + arrow + "</th>";
+    return "<th style='cursor:pointer;user-select:none;white-space:nowrap' onclick=\"sortReconTable('" + c.key + "')\">" + c.label + arrow + "</th>";
   }).join("") + "</tr>";
 
   const bodyHtml = sorted.map(function(r) {
@@ -707,8 +718,10 @@ function renderReconTable() {
     const varianceCell = variance === null ? "—" : (variance === 0 ? "<span style='color:#155724'>0</span>" : "<span style='color:#721c24;font-weight:bold'>" + (variance > 0 ? "+" : "") + variance + "</span>");
     const rows = currentReconTraceMap[r.material];
     const barcode = currentReconBarcodeMap[r.material] || "";
-    return "<tr><td>" + barcode + "</td><td>" + r.material + "</td><td>" + (r.description||"") + "</td><td>" + (r.book_quantity ?? "") + "</td><td>" + r.qty_counted + "</td><td>" + varianceCell + "</td><td>" + r.zero_count +
-      "</td><td class='trace-cell'>" + buildTraceSummary(rows) + "</td>" +
+    return "<tr><td>" + (r.phys_inventory_doc||"") + "</td><td>" + (r.item||"") + "</td><td>" + r.material + "</td><td>" + (r.description||"") + "</td>" +
+      "<td>" + (r.batch||"") + "</td><td>" + (r.plant||"") + "</td><td>" + (r.storage_location||"") + "</td><td>" + (r.special_stock||"") + "</td><td>" + (r.count_date||"") + "</td>" +
+      "<td>" + r.qty_counted + "</td><td>" + (r.base_uom||"") + "</td><td>" + (r.book_quantity ?? "") + "</td><td>" + r.zero_count + "</td><td>" + varianceCell + "</td><td>" + barcode + "</td>" +
+      "<td class='trace-cell'>" + buildTraceSummary(rows) + "</td>" +
       "<td><button class='btn btn-gray' style='width:auto;padding:6px 10px;margin:0;font-size:11px' onclick=\"traceMaterial('" + r.material.replace(/'/g,"\\'") + "', '" + (r.description||"").replace(/'/g,"\\'") + "')\">🔍</button></td></tr>";
   }).join("");
 
@@ -729,18 +742,26 @@ function exportReconciliationExcel() {
     const variance = computeVariance(r);
     const rows = currentReconTraceMap[r.material];
     return {
-      "Barcode": currentReconBarcodeMap[r.material] || "",
+      "Phys. Inventory Doc.": r.phys_inventory_doc || "",
+      "Item": r.item || "",
       "Material": r.material,
-      "Description": r.description || "",
-      "Book Qty": r.book_quantity ?? "",
+      "Material Description": r.description || "",
+      "Batch": r.batch || "",
+      "Plant": r.plant || "",
+      "Storage location": r.storage_location || "",
+      "Special Stock": r.special_stock || "",
+      "Count Date": r.count_date || "",
       "Qty Counted": r.qty_counted,
-      "Variance": variance === null ? "" : variance,
+      "Base Unit of Measure": r.base_uom || "",
+      "Book Quantity": r.book_quantity ?? "",
       "Zero Count": r.zero_count,
+      "Var Qty": variance === null ? "" : variance,
+      "Barcode": currentReconBarcodeMap[r.material] || "",
       "Gondola Trace": buildTraceSummary(rows)
     };
   });
 
-  const headers = ["Barcode", "Material", "Description", "Book Qty", "Qty Counted", "Variance", "Zero Count", "Gondola Trace"];
+  const headers = ["Phys. Inventory Doc.", "Item", "Material", "Material Description", "Batch", "Plant", "Storage location", "Special Stock", "Count Date", "Qty Counted", "Base Unit of Measure", "Book Quantity", "Zero Count", "Var Qty", "Barcode", "Gondola Trace"];
   const ws = XLSX.utils.json_to_sheet(sheetData, { header: headers });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Reconciliation");
@@ -753,7 +774,10 @@ async function loadReconciliation() {
   if (!outletId) { alert("Select an outlet."); return; }
   if (!deptId) { alert("Select a department."); return; }
 
-  const { data, error } = await sb.from("reconciliation").select("*").eq("department_id", deptId).eq("outlet_id", outletId).order("material");
+  // sap_export carries the full SAP document shape (phys inventory doc, batch, plant, storage location,
+  // etc.) that the plain reconciliation view doesn't — this is also exactly what the Export tab downloads,
+  // so what you review here now matches what actually goes to SAP, column for column.
+  const { data, error } = await sb.from("sap_export").select("*").eq("department_id", deptId).eq("outlet_id", outletId).order("material");
   if (error) { alert("❌ " + error.message); return; }
 
   // One batched call for every material's gondola-level scan breakdown in this department + outlet —
@@ -767,8 +791,8 @@ async function loadReconciliation() {
     });
   }
 
-  // Barcode comes from products (master data), scoped to this department — reconciliation itself is grouped
-  // by material and doesn't carry barcode, so this is a separate lookup merged in by material code.
+  // Barcode comes from products (master data), scoped to this department — sap_export doesn't carry
+  // barcode, so this is a separate lookup merged in by material code.
   const { data: productRows, error: prodErr } = await sb.from("products").select("barcode, material").eq("department_id", deptId);
   currentReconBarcodeMap = {};
   if (!prodErr && productRows) {
@@ -827,6 +851,18 @@ function closeTraceModal() {
 // ═══════════════════════════════════════════════════
 // SESSIONS / COUNT SHEET (Zone Count Report)
 // ═══════════════════════════════════════════════════
+
+// Manual refresh for the whole Sessions tab — reloads the status overview table and the session
+// dropdown together, without a full page reload (which would also force re-entering the PIN).
+async function refreshSessionsTab() {
+  const btn = document.getElementById("btn-refresh-sessions");
+  btn.disabled = true;
+  btn.textContent = "🔄 Refreshing...";
+  await Promise.all([loadStatusOverview(), loadSessionsList()]);
+  btn.disabled = false;
+  btn.textContent = "🔄 Refresh";
+}
+
 async function loadStatusOverview() {
   const deptFilter = document.getElementById("session-dept-filter").value;
   const outletFilter = document.getElementById("session-outlet-filter").value;
