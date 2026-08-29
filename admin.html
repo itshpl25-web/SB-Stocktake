@@ -148,6 +148,8 @@
 
     <div class="card">
       <h2>📋 Load a Report</h2>
+      <label>Search (gondola, staff, status...)</label>
+      <input type="text" id="session-search-input" placeholder="🔍 Type to filter..." oninput="renderSessionSelect(this.value)"/>
       <label>Session</label>
       <select id="session-select"><option>Loading...</option></select>
       <button class="btn btn-admin" onclick="loadCountSheet()">Load Zone Count Report</button>
@@ -815,7 +817,7 @@ async function loadStatusOverview() {
   const outletFilter = document.getElementById("session-outlet-filter").value;
   const printFilter = document.getElementById("session-print-filter").value;
 
-  let query = sb.from("session_summary").select("*").order("started_at", { ascending: false }).limit(100);
+  let query = sb.from("session_summary").select("*").order("started_at", { ascending: false }).limit(500);
   if (deptFilter) query = query.eq("department_id", deptFilter);
   if (outletFilter) query = query.eq("outlet_id", outletFilter);
   if (printFilter === "printed") query = query.not("printed_at", "is", null);
@@ -847,6 +849,8 @@ async function loadStatusOverview() {
     }).join("");
 }
 
+let currentSessionListData = []; // raw rows from the last loadSessionsList fetch — filtered client-side, no re-fetch needed
+
 async function loadSessionsList() {
   const deptFilter = document.getElementById("session-dept-filter").value;
   const outletFilter = document.getElementById("session-outlet-filter").value;
@@ -855,16 +859,48 @@ async function loadSessionsList() {
     .from("gondola_sessions")
     .select("id, gondola_id, staff_name, status, started_at, printed_at, departments(name), outlets(name)")
     .order("started_at", { ascending: false })
-    .limit(50);
+    .limit(500);
 
   if (deptFilter) query = query.eq("department_id", deptFilter);
   if (outletFilter) query = query.eq("outlet_id", outletFilter);
 
   const { data, error } = await query;
 
+  currentSessionListData = (!error && data) ? data : [];
+  document.getElementById("session-search-input").value = ""; // reset the search box on every fresh load/filter change
+  renderSessionSelect("");
+}
+
+// Filters the cached session list against the search box text and rebuilds the <select> options.
+// Multi-word search: every space-separated word must match somewhere (gondola, outlet, department, status, or staff) —
+// so "TY29" or "Aseng TOYS" both narrow the list correctly, similar to how a spreadsheet filter box works.
+function renderSessionSelect(filterText) {
   const sel = document.getElementById("session-select");
-  if (error || !data || data.length === 0) { sel.innerHTML = '<option value="">No sessions found</option>'; return; }
-  sel.innerHTML = data.map(s =>
+
+  if (currentSessionListData.length === 0) {
+    sel.innerHTML = '<option value="">No sessions found</option>';
+    return;
+  }
+
+  const terms = (filterText || "").toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const filtered = currentSessionListData.filter(function(s) {
+    if (terms.length === 0) return true;
+    const haystack = [
+      s.gondola_id,
+      s.outlets ? s.outlets.name : "",
+      s.departments ? s.departments.name : "",
+      s.status,
+      s.staff_name
+    ].join(" ").toLowerCase();
+    return terms.every(function(t) { return haystack.indexOf(t) !== -1; });
+  });
+
+  if (filtered.length === 0) {
+    sel.innerHTML = '<option value="">No sessions match "' + filterText + '"</option>';
+    return;
+  }
+
+  sel.innerHTML = filtered.map(s =>
     '<option value="' + s.id + '">' + (s.printed_at ? "🖨️ " : "") + s.gondola_id + " — " + (s.outlets ? s.outlets.name : "?") + " — " + (s.departments ? s.departments.name : "?") +
     " (" + s.status.replace("_", " ").toUpperCase() + ", " + s.staff_name + ")</option>"
   ).join("");
