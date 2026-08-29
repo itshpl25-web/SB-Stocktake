@@ -56,7 +56,7 @@
     .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
     .modal-header h2 { font-size: 16px; color: #444; }
     .modal-close { background: none; border: none; font-size: 18px; cursor: pointer; color: #888; width: auto; padding: 4px 8px; margin: 0; }
-    .trace-cell { max-width: 220px; white-space: normal; word-break: break-word; font-size: 11px; color: #555; }
+    .trace-cell { max-width: 220px; max-height: 70px; overflow-y: auto; white-space: normal; word-break: break-word; font-size: 11px; color: #555; }
 
     #print-sheet { display: none; }
     @media print {
@@ -627,9 +627,25 @@ let currentReconBarcodeMap = {}; // material -> barcode, from the last Load Repo
 let currentReconRows = [];       // raw rows from the last Load Report — kept so sorting/exporting don't need a re-fetch
 let currentReconSort = { key: "material", dir: 1 }; // dir: 1 = ascending, -1 = descending
 
+// Inline summary: one line per gondola, summed — a quick "how much from where" glance.
+// This is deliberately different from the 🔍 modal, which lists every individual scan unsummed with
+// timestamps — that's where a genuine discrepancy actually gets investigated. Summing here just keeps
+// the table row from ballooning when one material's been scanned many times on the same gondola.
 function buildTraceSummary(rows) {
   if (!rows || rows.length === 0) return "—";
-  return rows.map(function(r) { return r.gondola_id + ": " + r.qty; }).join(", ");
+
+  const byGondola = {}; // gondola_id -> { sum, count }
+  const order = [];
+  rows.forEach(function(r) {
+    if (!byGondola[r.gondola_id]) { byGondola[r.gondola_id] = { sum: 0, count: 0 }; order.push(r.gondola_id); }
+    byGondola[r.gondola_id].sum += Number(r.qty) || 0;
+    byGondola[r.gondola_id].count += 1;
+  });
+
+  return order.map(function(g) {
+    const agg = byGondola[g];
+    return g + ": " + agg.sum + (agg.count > 1 ? " (" + agg.count + " scans)" : "");
+  }).join(", ");
 }
 
 // Variance is computed on the fly (not stored), so both the cell display and sorting share this one definition.
