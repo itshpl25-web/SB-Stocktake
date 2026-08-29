@@ -635,6 +635,7 @@ function resetScan() {
   document.getElementById("qty-input").value = "";
   currentScanRequestId = null;
   hideProduct();
+  document.getElementById("barcode-input").focus();
   setTimeout(function() { setStatus("", ""); }, 2000);
 }
 
