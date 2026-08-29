@@ -60,9 +60,8 @@
 
     #print-sheet { display: none; }
     @media print {
-      body * { visibility: hidden; }
-      #print-sheet, #print-sheet * { visibility: visible; }
-      #print-sheet { display: block !important; position: absolute; top: 0; left: 0; width: 100%; }
+      body > *:not(#print-sheet) { display: none !important; }
+      #print-sheet { display: block !important; position: static; width: 100%; }
     }
   </style>
 </head>
@@ -917,7 +916,7 @@ async function loadCountSheet() {
   const { data: session, error: sErr } = await sb.from("gondola_sessions").select("*, departments(name), outlets(name)").eq("id", sessionId).single();
   if (sErr || !session) { document.getElementById("session-log").innerHTML = "❌ Couldn't load session."; return; }
 
-  const { data: items, error: iErr } = await sb.from("scan_items").select("*").eq("session_id", sessionId).order("material");
+  const { data: items, error: iErr } = await sb.from("scan_items").select("*").eq("session_id", sessionId).order("created_at", { ascending: true });
   if (iErr) { document.getElementById("session-log").innerHTML = "❌ Couldn't load items."; return; }
 
   currentReportSessionId = sessionId;
@@ -966,7 +965,7 @@ function renderEditTable(items) {
 
 async function refreshCurrentReport() {
   if (!currentReportSessionId) return;
-  const { data: items } = await sb.from("scan_items").select("*").eq("session_id", currentReportSessionId).order("material");
+  const { data: items } = await sb.from("scan_items").select("*").eq("session_id", currentReportSessionId).order("created_at", { ascending: true });
   renderPrintTable(items || []);
   renderEditTable(items || []);
   loadStatusOverview(); // item counts may have changed
