@@ -122,7 +122,7 @@
       <div class="drop-zone" onclick="document.getElementById('sap-file-input').click()">📄 Click to select MI24 export Excel file</div>
       <input type="file" id="sap-file-input" accept=".xlsx,.xls" style="display:none"/>
       <div id="sap-preview-info" style="font-size:13px;color:#666;margin-bottom:10px"></div>
-      <button id="btn-sap-upload" class="btn btn-admin" onclick="startSapImport()" disabled>⬆ Replace MI24 Data</button>
+      <button id="btn-sap-upload" class="btn btn-admin" onclick="startSapImport()" disabled>⬆ Update MI24 Data</button>
       <div id="sap-log"></div>
     </div>
 
@@ -580,7 +580,7 @@ async function startSapImport() {
   const btn = document.getElementById("btn-sap-upload");
   if (btn.disabled) return;
   btn.disabled = true; btn.textContent = "Uploading...";
-  function reset() { btn.disabled = false; btn.textContent = "⬆ Replace MI24 Data"; }
+  function reset() { btn.disabled = false; btn.textContent = "⬆ Update MI24 Data"; }
 
   const outletId = document.getElementById("sap-outlet-select").value;
   const deptId = document.getElementById("sap-dept-select").value;
