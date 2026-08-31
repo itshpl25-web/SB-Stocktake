@@ -792,12 +792,21 @@ async function loadReconciliation() {
     });
   }
 
-  // Barcode comes from products (master data), scoped to this department — sap_export doesn't carry
-  // barcode, so this is a separate lookup merged in by material code.
-  const { data: productRows, error: prodErr } = await sb.from("products").select("barcode, material").eq("department_id", deptId);
+  // Barcode comes from products (master data), looked up only for the materials actually in this
+  // report — not the whole department. Fetching the entire department's catalog here silently broke
+  // once a department's product count passed Supabase's default 1000-row-per-request cap (e.g. TOYS,
+  // which has 11,371 product rows); scoping to just what's on screen avoids that entirely, since a
+  // single report's material count is comfortably under that limit. Chunked defensively anyway, in
+  // case a future department's report ever approaches that size.
+  const materialCodes = Array.from(new Set(data.map(function(r) { return r.material; })));
   currentReconBarcodeMap = {};
-  if (!prodErr && productRows) {
-    productRows.forEach(function(p) { currentReconBarcodeMap[p.material] = p.barcode; });
+  const barcodeChunkSize = 300;
+  for (let i = 0; i < materialCodes.length; i += barcodeChunkSize) {
+    const chunk = materialCodes.slice(i, i + barcodeChunkSize);
+    const { data: productRows, error: prodErr } = await sb.from("products").select("barcode, material").eq("department_id", deptId).in("material", chunk);
+    if (!prodErr && productRows) {
+      productRows.forEach(function(p) { currentReconBarcodeMap[p.material] = p.barcode; });
+    }
   }
 
   currentReconRows = data;
