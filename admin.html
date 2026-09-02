@@ -769,6 +769,27 @@ function exportReconciliationExcel() {
   XLSX.writeFile(wb, "Reconciliation_" + outletName.replace(/\s+/g, "_") + "_" + deptName.replace(/\s+/g, "_") + "_" + new Date().toISOString().slice(0, 10) + ".xlsx");
 }
 
+// Fetches every row from a Supabase query in batches of 1000 — PostgREST caps a single response at
+// 1000 rows by default, which silently truncates results with no error at all. This bit us twice now:
+// once on the barcode lookup (fixed by narrowing scope), and again here on the reconciliation data
+// itself once a larger outlet (SHBN) crossed that threshold. Rather than patch each query individually,
+// this wraps any select/rpc chain and keeps fetching pages until a short page confirms we're done.
+// 'buildQuery' is a function so a fresh query builder can be created for each page's .range() call.
+async function fetchAllPages(buildQuery) {
+  const pageSize = 1000;
+  let allRows = [];
+  let page = 0;
+  while (true) {
+    const { data, error } = await buildQuery().range(page * pageSize, page * pageSize + pageSize - 1);
+    if (error) return { data: allRows, error: error };
+    if (!data || data.length === 0) break;
+    allRows = allRows.concat(data);
+    if (data.length < pageSize) break; // short page — that was the last one
+    page++;
+  }
+  return { data: allRows, error: null };
+}
+
 async function loadReconciliation() {
   const outletId = document.getElementById("recon-outlet-select").value;
   const deptId = document.getElementById("recon-dept-select").value;
@@ -778,12 +799,18 @@ async function loadReconciliation() {
   // sap_export carries the full SAP document shape (phys inventory doc, batch, plant, storage location,
   // etc.) that the plain reconciliation view doesn't — this is also exactly what the Export tab downloads,
   // so what you review here now matches what actually goes to SAP, column for column.
-  const { data, error } = await sb.from("sap_export").select("*").eq("department_id", deptId).eq("outlet_id", outletId).order("material");
+  const { data, error } = await fetchAllPages(() =>
+    sb.from("sap_export").select("*").eq("department_id", deptId).eq("outlet_id", outletId).order("material")
+  );
   if (error) { alert("❌ " + error.message); return; }
 
   // One batched call for every material's gondola-level scan breakdown in this department + outlet —
   // avoids firing a separate query per row, which would be slow for departments with many materials.
-  const { data: traceRows, error: traceErr } = await sb.rpc("department_scan_trace", { p_department_id: deptId, p_outlet_id: outletId });
+  // Also paginated — a department with heavy scanning activity can easily produce more than 1000
+  // individual scan rows, which is a separate risk from the material count above.
+  const { data: traceRows, error: traceErr } = await fetchAllPages(() =>
+    sb.rpc("department_scan_trace", { p_department_id: deptId, p_outlet_id: outletId })
+  );
   currentReconTraceMap = {};
   if (!traceErr && traceRows) {
     traceRows.forEach(function(r) {
@@ -824,7 +851,9 @@ async function loadReconciliation() {
 
   renderReconTable();
 
-  const { data: unmatched } = await sb.from("unmatched_scans").select("*").eq("department_id", deptId).eq("outlet_id", outletId).order("material");
+  const { data: unmatched } = await fetchAllPages(() =>
+    sb.from("unmatched_scans").select("*").eq("department_id", deptId).eq("outlet_id", outletId).order("material")
+  );
   const utable = document.getElementById("unmatched-table");
   if (!unmatched || unmatched.length === 0) {
     utable.innerHTML = "<tr><td style='padding:10px;color:#999'>None — every scanned item matches the SAP book list.</td></tr>";
@@ -1076,7 +1105,9 @@ async function previewExport() {
   if (!deptId) { alert("Select a department."); return; }
 
   document.getElementById("export-log").innerHTML = "Fetching...";
-  const { data, error } = await sb.from("sap_export").select("*").eq("department_id", deptId).eq("outlet_id", outletId);
+  const { data, error } = await fetchAllPages(() =>
+    sb.from("sap_export").select("*").eq("department_id", deptId).eq("outlet_id", outletId)
+  );
   if (error) { document.getElementById("export-log").innerHTML = "❌ " + error.message; return; }
   if (!data || data.length === 0) { document.getElementById("export-log").innerHTML = "⚠️ No MI24 data for this outlet + department — upload it first."; document.getElementById("btn-export-download").disabled = true; return; }
 
@@ -1125,7 +1156,9 @@ async function previewClear() {
 
   const { count: sessionCount } = await sb.from("gondola_sessions").select("*", { count: "exact", head: true }).eq("department_id", deptId).eq("outlet_id", outletId);
 
-  const { data: sessions } = await sb.from("gondola_sessions").select("id").eq("department_id", deptId).eq("outlet_id", outletId);
+  const { data: sessions } = await fetchAllPages(() =>
+    sb.from("gondola_sessions").select("id").eq("department_id", deptId).eq("outlet_id", outletId)
+  );
   const sessionIds = (sessions || []).map(s => s.id);
   let scanCount = 0;
   if (sessionIds.length > 0) {
