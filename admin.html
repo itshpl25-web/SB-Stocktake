@@ -629,10 +629,10 @@ let currentReconBarcodeMap = {}; // material -> barcode, from the last Load Repo
 let currentReconRows = [];       // raw rows from the last Load Report — kept so sorting/exporting don't need a re-fetch
 let currentReconSort = { key: "material", dir: 1 }; // dir: 1 = ascending, -1 = descending
 
-// Variance is computed on the fly (not stored), so both the cell display and sorting share this one definition.
+// Variance is computed on the fly (not stored), so both the cell display and sorting share this one
+// definition. A blank book_quantity from SAP means a confirmed zero (not "unknown") — treated as 0.
 function computeVariance(r) {
-  const hasBook = r.book_quantity !== null && r.book_quantity !== undefined;
-  return hasBook ? (Number(r.qty_counted) - Number(r.book_quantity)) : null;
+  return Number(r.qty_counted) - (Number(r.book_quantity) || 0);
 }
 
 // Column definitions match the physical SAP MI24 document template exactly (same column order and
@@ -651,9 +651,9 @@ const RECON_COLUMNS = [
   { key: "count_date",          label: "Count Date",             get: r => r.count_date || "" },
   { key: "qty_counted",         label: "Qty Counted",            get: r => Number(r.qty_counted) || 0 },
   { key: "base_uom",            label: "Base Unit of Measure",   get: r => r.base_uom || "" },
-  { key: "book_quantity",       label: "Book Quantity",          get: r => r.book_quantity === null || r.book_quantity === undefined ? -Infinity : Number(r.book_quantity) },
+  { key: "book_quantity",       label: "Book Quantity",          get: r => Number(r.book_quantity) || 0 },
   { key: "zero_count",          label: "Zero Count",             get: r => r.zero_count === "X" ? 1 : 0 },
-  { key: "variance",            label: "Var Qty",                get: r => { const v = computeVariance(r); return v === null ? -Infinity : v; } },
+  { key: "variance",            label: "Var Qty",                get: r => computeVariance(r) },
   { key: "barcode",             label: "Barcode",                get: r => currentReconBarcodeMap[r.material] || "" },
   { key: "trace",                label: "Gondola Trace",          get: null },
   { key: "action",               label: "",                        get: null }
@@ -716,12 +716,12 @@ function renderReconTable() {
 
   const bodyHtml = sorted.map(function(r) {
     const variance = computeVariance(r);
-    const varianceCell = variance === null ? "—" : (variance === 0 ? "<span style='color:#155724'>0</span>" : "<span style='color:#721c24;font-weight:bold'>" + (variance > 0 ? "+" : "") + variance + "</span>");
+    const varianceCell = variance === 0 ? "<span style='color:#155724'>0</span>" : "<span style='color:#721c24;font-weight:bold'>" + (variance > 0 ? "+" : "") + variance + "</span>";
     const rows = currentReconTraceMap[r.material];
     const barcode = currentReconBarcodeMap[r.material] || "";
     return "<tr><td>" + (r.phys_inventory_doc||"") + "</td><td>" + (r.item||"") + "</td><td>" + r.material + "</td><td>" + (r.description||"") + "</td>" +
       "<td>" + (r.batch||"") + "</td><td>" + (r.plant||"") + "</td><td>" + (r.storage_location||"") + "</td><td>" + (r.special_stock||"") + "</td><td>" + (r.count_date||"") + "</td>" +
-      "<td>" + r.qty_counted + "</td><td>" + (r.base_uom||"") + "</td><td>" + (r.book_quantity ?? "") + "</td><td>" + r.zero_count + "</td><td>" + varianceCell + "</td><td>" + barcode + "</td>" +
+      "<td>" + r.qty_counted + "</td><td>" + (r.base_uom||"") + "</td><td>" + (r.book_quantity ?? 0) + "</td><td>" + r.zero_count + "</td><td>" + varianceCell + "</td><td>" + barcode + "</td>" +
       "<td class='trace-cell'>" + buildTraceSummary(rows) + "</td>" +
       "<td><button class='btn btn-gray' style='width:auto;padding:6px 10px;margin:0;font-size:11px' onclick=\"traceMaterial('" + r.material.replace(/'/g,"\\'") + "', '" + (r.description||"").replace(/'/g,"\\'") + "')\">🔍</button></td></tr>";
   }).join("");
@@ -754,9 +754,9 @@ function exportReconciliationExcel() {
       "Count Date": r.count_date || "",
       "Qty Counted": r.qty_counted,
       "Base Unit of Measure": r.base_uom || "",
-      "Book Quantity": r.book_quantity ?? "",
+      "Book Quantity": r.book_quantity ?? 0,
       "Zero Count": r.zero_count,
-      "Var Qty": variance === null ? "" : variance,
+      "Var Qty": variance,
       "Barcode": currentReconBarcodeMap[r.material] || "",
       "Gondola Trace": buildTraceSummary(rows)
     };
