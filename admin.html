@@ -340,7 +340,38 @@ function logTo(elId, msg, type) {
 // ═══════════════════════════════════════════════════
 // MASTER LIST UPLOAD
 // ═══════════════════════════════════════════════════
-const MASTER_COL_INDICES = [2, 3, 37, 7, 8, 4];
+
+// Columns are matched by their exact header text (case-insensitive), not by fixed position.
+// This is deliberate: a real-world incident showed that a differently-configured SAP export
+// (fewer/reordered columns) silently wrote Cost values into the UOM field and left Material
+// Group blank, with no error at all, because the old parser trusted a hardcoded column index
+// regardless of what was actually in that position. Matching by header name means a
+// differently-shaped file either still parses correctly (if the columns are just reordered)
+// or fails loudly with a clear message (if a needed column is genuinely missing) — never silently.
+// Note: "Material Group" and "Material Group Desc." are two different columns in the real
+// template: this must match "Material Group" exactly, not just contain those words.
+const REQUIRED_MASTER_COLUMNS = {
+  material: "Material",
+  description: "Material Description",
+  barcode: "EAN/UPC",
+  uom: "Sales unit",
+  numerator: "Numerator",
+  material_group: "Material Group"
+};
+
+function findMasterColumnIndices(headerRow) {
+  const normalized = (headerRow || []).map(function(h) { return (h || "").toString().trim().toLowerCase(); });
+  const indices = {};
+  const missing = [];
+  Object.keys(REQUIRED_MASTER_COLUMNS).forEach(function(field) {
+    const wanted = REQUIRED_MASTER_COLUMNS[field].toLowerCase();
+    const idx = normalized.indexOf(wanted);
+    if (idx === -1) missing.push(REQUIRED_MASTER_COLUMNS[field]);
+    else indices[field] = idx;
+  });
+  return { indices: indices, missing: missing };
+}
+
 let extractedMasterRows = [];
 
 document.getElementById("master-dept-select").addEventListener("change", function() {
@@ -368,24 +399,34 @@ function handleMasterFile(file) {
     const allRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false });
     if (allRows.length < 2) { logTo("master-log", "❌ File appears empty.", "err"); return; }
 
+    const { indices: col, missing } = findMasterColumnIndices(allRows[0]);
+    if (missing.length > 0) {
+      logTo("master-log", "❌ This file is missing expected column(s): " + missing.join(", ") +
+        ". Check the header row matches the standard MASTERLIST template (column names must match exactly, e.g. \"Sales unit\", \"Material Group\") and try again.", "err");
+      document.getElementById("master-preview-info").innerHTML = "";
+      document.getElementById("btn-master-upload").disabled = true;
+      extractedMasterRows = [];
+      return;
+    }
+
     const seen = {};
     for (let i = 1; i < allRows.length; i++) {
       const row = allRows[i];
-      const material = row[2];
-      const barcode = normalizeBarcode(row[4]);
+      const material = row[col.material];
+      const barcode = normalizeBarcode(row[col.barcode]);
       if (!material && !barcode) continue;
       if (!barcode) continue;
       seen[barcode] = {
         barcode: barcode,
-        material: (row[2] || "").toString().trim(),
-        description: (row[3] || "").toString().trim(),
-        material_group: (row[37] || "").toString().trim(),
-        uom: (row[7] || "").toString().trim(),
-        numerator: Number(row[8]) || 1
+        material: (row[col.material] || "").toString().trim(),
+        description: (row[col.description] || "").toString().trim(),
+        material_group: (row[col.material_group] || "").toString().trim(),
+        uom: (row[col.uom] || "").toString().trim(),
+        numerator: Number(row[col.numerator]) || 1
       };
     }
     extractedMasterRows = Object.values(seen);
-    logTo("master-log", "✅ Parsed " + extractedMasterRows.length + " unique-barcode rows.", "ok");
+    logTo("master-log", "✅ Parsed " + extractedMasterRows.length + " unique-barcode rows (columns matched by header name).", "ok");
     document.getElementById("btn-master-upload").disabled = true; // stays disabled until the change check below finishes
     previewMasterChanges();
   };
