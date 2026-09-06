@@ -416,13 +416,16 @@ function handleMasterFile(file) {
       const barcode = normalizeBarcode(row[col.barcode]);
       if (!material && !barcode) continue;
       if (!barcode) continue;
+      const rawNumerator = row[col.numerator];
+      const numeratorIsBlank = rawNumerator === "" || rawNumerator === null || rawNumerator === undefined || isNaN(Number(rawNumerator));
       seen[barcode] = {
         barcode: barcode,
         material: (row[col.material] || "").toString().trim(),
         description: (row[col.description] || "").toString().trim(),
         material_group: (row[col.material_group] || "").toString().trim(),
         uom: (row[col.uom] || "").toString().trim(),
-        numerator: Number(row[col.numerator]) || 1
+        numerator: Number(rawNumerator) || 1,
+        numeratorWasBlank: numeratorIsBlank // preview-only flag, not uploaded — surfaced as a warning before commit
       };
     }
     extractedMasterRows = Object.values(seen);
@@ -474,37 +477,52 @@ async function previewMasterChanges() {
   }
 
   const FIELD_LABELS = { material: "Material Code", description: "Description", material_group: "Material Group", uom: "UOM", numerator: "Numerator" };
-  let newCount = 0, unchangedCount = 0, updatedCount = 0, deptChangeCount = 0;
+  let newCount = 0, unchangedCount = 0, updatedCount = 0, deptChangeCount = 0, numeratorBlankCount = 0;
   const changeRows = [];
 
   extractedMasterRows.forEach(function(r) {
     const existing = existingByBarcode[r.barcode];
-    if (!existing) { newCount++; return; }
-
     const fieldChanges = [];
-    ["material", "description", "material_group", "uom"].forEach(function(f) {
-      const oldVal = (existing[f] || "").toString().trim();
-      const newVal = (r[f] || "").toString().trim();
-      if (oldVal !== newVal) fieldChanges.push({ field: FIELD_LABELS[f], old: oldVal || "(blank)", new: newVal || "(blank)" });
-    });
-    if (Number(existing.numerator) !== Number(r.numerator)) {
-      fieldChanges.push({ field: FIELD_LABELS.numerator, old: existing.numerator, new: r.numerator });
+
+    if (!existing) {
+      newCount++;
+    } else {
+      ["material", "description", "material_group", "uom"].forEach(function(f) {
+        const oldVal = (existing[f] || "").toString().trim();
+        const newVal = (r[f] || "").toString().trim();
+        if (oldVal !== newVal) fieldChanges.push({ field: FIELD_LABELS[f], old: oldVal || "(blank)", new: newVal || "(blank)" });
+      });
+      if (Number(existing.numerator) !== Number(r.numerator)) {
+        fieldChanges.push({ field: FIELD_LABELS.numerator, old: existing.numerator, new: r.numerator });
+      }
     }
 
     // A brand-new department is always a "move" for any barcode that already exists somewhere else.
-    const movingToNewDept = deptId === "__new__";
-    const deptChanged = !movingToNewDept && String(existing.department_id) !== String(deptId);
-
-    if (deptChanged || movingToNewDept) {
+    const movingToNewDept = existing && deptId === "__new__";
+    const deptChanged = existing && !movingToNewDept && String(existing.department_id) !== String(deptId);
+    if (existing && (deptChanged || movingToNewDept)) {
       deptChangeCount++;
       fieldChanges.push({ field: "Department", old: deptNameById[existing.department_id] || "?", new: targetDeptName });
     }
 
-    if (fieldChanges.length > 0) {
-      updatedCount++;
-      changeRows.push({ barcode: r.barcode, description: r.description, changes: fieldChanges, deptChanged: deptChanged || movingToNewDept });
-    } else {
-      unchangedCount++;
+    // Blank Numerator in the source file — flagged regardless of new/existing, since a silently-defaulted
+    // value matters just as much (arguably more) on a brand-new product with no prior value to fall back on.
+    const numeratorBlank = !!r.numeratorWasBlank;
+    if (numeratorBlank) {
+      numeratorBlankCount++;
+      fieldChanges.push({ field: "⚠️ Numerator", old: "(blank in file)", new: "defaulted to 1 — verify this is correct" });
+    }
+
+    if (existing) {
+      if (fieldChanges.length > 0) {
+        updatedCount++;
+        changeRows.push({ barcode: r.barcode, description: r.description, changes: fieldChanges, deptChanged: deptChanged || movingToNewDept, numeratorBlank: numeratorBlank });
+      } else {
+        unchangedCount++;
+      }
+    } else if (numeratorBlank) {
+      // New barcode with nothing to compare against, but still worth surfacing the warning inline.
+      changeRows.push({ barcode: r.barcode, description: r.description, changes: fieldChanges, deptChanged: false, numeratorBlank: true });
     }
   });
 
@@ -512,16 +530,20 @@ async function previewMasterChanges() {
   if (deptChangeCount > 0) {
     html += "<br/><span style='color:#e53935;font-weight:bold'>⚠️ " + deptChangeCount + " barcode(s) will move to a different department — review these before uploading.</span>";
   }
+  if (numeratorBlankCount > 0) {
+    html += "<br/><span style='color:#856404;font-weight:bold'>⚠️ " + numeratorBlankCount + " barcode(s) have a blank Numerator in the file — defaulted to 1, review before uploading.</span>";
+  }
 
   if (changeRows.length > 0) {
     html += "<div class='table-scroll' style='max-height:250px;margin-top:10px'><table class='data-table'>" +
       "<tr><th>Barcode</th><th>Description</th><th>Change</th></tr>" +
       changeRows.map(function(cr) {
         const changeText = cr.changes.map(function(c) {
-          const style = c.field === "Department" ? "color:#e53935;font-weight:bold" : "";
+          const style = c.field === "Department" ? "color:#e53935;font-weight:bold" : (c.field.indexOf("Numerator") === 0 || c.field === "⚠️ Numerator" ? "color:#856404;font-weight:bold" : "");
           return "<div style='" + style + "'>" + c.field + ": " + c.old + " → " + c.new + "</div>";
         }).join("");
-        return "<tr" + (cr.deptChanged ? " style='background:#fff5f5'" : "") + "><td>" + cr.barcode + "</td><td>" + (cr.description||"") + "</td><td>" + changeText + "</td></tr>";
+        const rowBg = cr.deptChanged ? "background:#fff5f5" : (cr.numeratorBlank ? "background:#fffbea" : "");
+        return "<tr" + (rowBg ? " style='" + rowBg + "'" : "") + "><td>" + cr.barcode + "</td><td>" + (cr.description||"") + "</td><td>" + changeText + "</td></tr>";
       }).join("") +
       "</table></div>";
   }
@@ -554,7 +576,19 @@ async function startMasterImport() {
 
   if (extractedMasterRows.length === 0) { alert("No data parsed."); reset(); return; }
 
-  const rows = extractedMasterRows.map(r => ({ ...r, department_id: deptId, updated_at: new Date().toISOString() }));
+  // Explicit field list, not a spread of the whole row object — extractedMasterRows carries
+  // preview-only helper fields (like numeratorWasBlank) that don't exist as products columns
+  // and would make Supabase reject the whole upsert if sent through.
+  const rows = extractedMasterRows.map(r => ({
+    barcode: r.barcode,
+    material: r.material,
+    description: r.description,
+    material_group: r.material_group,
+    uom: r.uom,
+    numerator: r.numerator,
+    department_id: deptId,
+    updated_at: new Date().toISOString()
+  }));
   const chunkSize = 500;
   const chunks = [];
   for (let i = 0; i < rows.length; i += chunkSize) chunks.push(rows.slice(i, i + chunkSize));
