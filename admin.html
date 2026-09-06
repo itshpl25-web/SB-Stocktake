@@ -103,6 +103,7 @@
       <p style="color:#666; font-size:13px; margin-bottom:16px">Upload the SAP material master export for one department. Existing barcodes update in place, new ones are added.</p>
       <label>Department</label>
       <select id="master-dept-select"><option>Loading...</option></select>
+      <div id="master-last-updated" style="font-size:12px;color:#888;margin-top:-6px;margin-bottom:14px"></div>
       <input type="text" id="master-dept-new" placeholder="New department name..." style="display:none;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()"/>
       <div class="drop-zone" onclick="document.getElementById('master-file-input').click()">📄 Click to select MASTER LIST Excel file</div>
       <input type="file" id="master-file-input" accept=".xlsx,.xls" style="display:none"/>
@@ -377,6 +378,7 @@ let extractedMasterRows = [];
 document.getElementById("master-dept-select").addEventListener("change", function() {
   document.getElementById("master-dept-new").style.display = this.value === "__new__" ? "block" : "none";
   if (extractedMasterRows.length > 0) previewMasterChanges();
+  loadMasterLastUpdated();
 });
 document.getElementById("master-dept-new").addEventListener("input", function() {
   if (extractedMasterRows.length > 0 && document.getElementById("master-dept-select").value === "__new__") previewMasterChanges();
@@ -384,6 +386,28 @@ document.getElementById("master-dept-new").addEventListener("input", function() 
 document.getElementById("master-file-input").addEventListener("change", function(e) {
   if (e.target.files[0]) handleMasterFile(e.target.files[0]);
 });
+
+// Shows when this department's master list was last touched — just the newest updated_at
+// across its products, not a fetch of every row (cheap even for a department with 11,000+ products).
+async function loadMasterLastUpdated() {
+  const el = document.getElementById("master-last-updated");
+  const deptId = document.getElementById("master-dept-select").value;
+
+  if (!deptId || deptId === "__new__") { el.textContent = ""; return; }
+
+  el.textContent = "Checking last update...";
+  const { data, error } = await sb.from("products")
+    .select("updated_at")
+    .eq("department_id", deptId)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  if (error || !data || data.length === 0) {
+    el.textContent = "No master list uploaded yet for this department.";
+    return;
+  }
+  el.textContent = "Last updated: " + new Date(data[0].updated_at).toLocaleString();
+}
 
 function normalizeBarcode(raw) {
   return (raw || "").toString().trim();
@@ -601,6 +625,7 @@ async function startMasterImport() {
     else { uploaded += chunks[i].length; }
   }
   logTo("master-log", (failed === 0 ? "✅ " : "⚠️ ") + "Done. " + uploaded + " uploaded, " + failed + " failed.", failed === 0 ? "ok" : "err");
+  loadMasterLastUpdated();
   reset();
 }
 
