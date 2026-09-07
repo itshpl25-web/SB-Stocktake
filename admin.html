@@ -1148,7 +1148,7 @@ function renderEditTable(items) {
       "<tr><td>" + it.barcode + "</td><td>" + it.description + "</td><td>" + uomWithNumerator(it.uom, it.numerator) + "</td>" +
       "<td><input type='number' min='0' max='9999' value='" + it.qty + "' id='edit-qty-" + it.id + "' style='width:70px;padding:4px;margin:0'/></td>" +
       "<td style='white-space:nowrap'>" +
-      "<button class='btn btn-admin' style='width:auto;padding:4px 10px;margin:0;font-size:12px' onclick='saveEditedQty(" + it.id + ")'>Save</button> " +
+      "<button class='btn btn-admin' id='save-btn-" + it.id + "' style='width:auto;padding:4px 10px;margin:0;font-size:12px' onclick='saveEditedQty(" + it.id + ")'>Save</button> " +
       "<button class='btn btn-gray' style='width:auto;padding:4px 10px;margin:0;font-size:12px;background:#ea4335;color:white' onclick='deleteEditedItem(" + it.id + ")'>Delete</button>" +
       "</td></tr>"
     ).join("");
@@ -1170,8 +1170,23 @@ async function saveEditedQty(itemId) {
   const { error } = await sb.from("scan_items").update({ qty: newQty, updated_at: new Date().toISOString() }).eq("id", itemId);
   if (error) { alert("❌ " + error.message); return; }
 
-  await refreshCurrentReport();
+  await refreshCurrentReport(); // rebuilds the whole table, so the button must be re-found by ID afterward, not held from before
   document.getElementById("session-log").innerHTML = "✅ Quantity updated — reconciliation reflects this immediately.";
+
+  // Flash the Save button itself — the top status message above is easy to miss once scrolled
+  // into a long table, but the button is exactly where the admin is already looking.
+  const btn = document.getElementById("save-btn-" + itemId);
+  if (btn) {
+    btn.textContent = "✅ Saved";
+    btn.style.background = "#34a853";
+    setTimeout(function() {
+      const stillThere = document.getElementById("save-btn-" + itemId);
+      if (stillThere) {
+        stillThere.textContent = "Save";
+        stillThere.style.background = "";
+      }
+    }, 1500);
+  }
 }
 
 async function deleteEditedItem(itemId) {
