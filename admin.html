@@ -210,6 +210,7 @@
       </p>
       <label>Outlet</label>
       <select id="clear-outlet-select"><option>Loading...</option></select>
+      <div id="clear-outlet-summary" style="font-size:13px;margin-bottom:14px"></div>
       <label>Department</label>
       <select id="clear-dept-select"><option>Loading...</option></select>
       <button class="btn btn-gray" onclick="previewClear()">Preview What Will Be Deleted</button>
@@ -289,6 +290,8 @@ function initAdminPanel() {
   populateOutletSelect("export-outlet-select", false);
   populateOutletSelect("clear-outlet-select", false);
   populateOutletSelect("session-outlet-filter", true);
+
+  document.getElementById("clear-outlet-select").addEventListener("change", loadClearOutletSummary);
 
   document.getElementById("session-dept-filter").addEventListener("change", function() {
     loadSessionsList();
@@ -1263,6 +1266,39 @@ function downloadExport() {
 // ═══════════════════════════════════════════════════
 // CLEAR DEPARTMENT DATA (post-stocktake reset)
 // ═══════════════════════════════════════════════════
+
+// Shows every department that still has MI24 data for the selected outlet, so it's obvious
+// at a glance what still needs clearing rather than checking department-by-department manually.
+// Uses count-only queries (head: true) — cheap regardless of table size, since they return just
+// a header count rather than fetching actual rows, same pattern already used in previewClear below.
+async function loadClearOutletSummary() {
+  const outletId = document.getElementById("clear-outlet-select").value;
+  const el = document.getElementById("clear-outlet-summary");
+
+  if (!outletId) { el.innerHTML = ""; return; }
+  el.innerHTML = "Checking which departments still have MI24 data...";
+
+  const { data: depts } = await sb.from("departments").select("id, name").order("name");
+  if (!depts || depts.length === 0) { el.innerHTML = ""; return; }
+
+  const results = await Promise.all(depts.map(async function(d) {
+    const { count } = await sb.from("sap_uploads").select("*", { count: "exact", head: true }).eq("department_id", d.id).eq("outlet_id", outletId);
+    return { name: d.name, count: count || 0 };
+  }));
+
+  const withData = results.filter(function(r) { return r.count > 0; }).sort(function(a, b) { return b.count - a.count; });
+
+  if (withData.length === 0) {
+    el.innerHTML = "<span style='color:#155724'>✅ No departments currently have MI24 data for this outlet.</span>";
+  } else {
+    el.innerHTML = "<b>" + withData.length + "</b> department(s) still have MI24 data for this outlet — may need clearing:" +
+      "<div class='table-scroll' style='max-height:180px;margin-top:6px'><table class='data-table'>" +
+      "<tr><th>Department</th><th>MI24 rows</th></tr>" +
+      withData.map(function(r) { return "<tr><td>" + r.name + "</td><td>" + r.count + "</td></tr>"; }).join("") +
+      "</table></div>";
+  }
+}
+
 async function previewClear() {
   const outletId = document.getElementById("clear-outlet-select").value;
   const deptId = document.getElementById("clear-dept-select").value;
@@ -1332,6 +1368,7 @@ async function clearDepartmentData() {
   document.getElementById("clear-summary").classList.add("hidden");
   document.getElementById("btn-clear-confirm").disabled = true;
   loadSessionsList();
+  loadClearOutletSummary();
 }
 </script>
 </body>
