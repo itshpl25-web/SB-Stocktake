@@ -156,7 +156,6 @@
       <select id="session-select"><option>Loading...</option></select>
       <button class="btn btn-admin" onclick="loadCountSheet()">Load Zone Count Report</button>
       <button class="btn btn-gray" onclick="printReport()">🖨️ Print</button>
-      <button class="btn btn-gray" style="background:#ea4335;color:white" onclick="deleteSingleSession()">🗑 Delete This Session</button>
       <div id="session-log"></div>
     </div>
 
@@ -1101,41 +1100,6 @@ function renderSessionSelect(filterText) {
 }
 
 let currentReportSessionId = null;
-
-// Deletes exactly one gondola session (and its scan_items, via ON DELETE CASCADE) — the fix for a
-// gondola ID accidentally started under the wrong department and marked Done, which otherwise
-// permanently blocks reuse of that gondola_id at this outlet (UNIQUE(gondola_id, outlet_id) isn't
-// scoped by department). Unlike Clear Department Data, this touches exactly one row, nothing else.
-async function deleteSingleSession() {
-  const sessionId = document.getElementById("session-select").value;
-  if (!sessionId) { alert("No session selected."); return; }
-
-  const session = currentSessionListData.find(function(s) { return String(s.id) === String(sessionId); });
-  const label = session
-    ? session.gondola_id + " — " + (session.outlets ? session.outlets.name : "?") + " — " + (session.departments ? session.departments.name : "?") +
-      " (" + session.status.replace("_", " ").toUpperCase() + ", " + session.staff_name + ")"
-    : "session #" + sessionId;
-
-  const sure = confirm(
-    "Permanently delete this ONE session and all its scanned items?\n\n" + label +
-    "\n\nThis cannot be undone. The gondola ID becomes reusable again immediately after this — " +
-    "no other sessions or departments are affected."
-  );
-  if (!sure) return;
-
-  const { error } = await sb.from("gondola_sessions").delete().eq("id", sessionId);
-  if (error) { alert("❌ " + error.message); return; }
-
-  if (String(currentReportSessionId) === String(sessionId)) {
-    currentReportSessionId = null;
-    renderPrintTable([]);
-    renderEditTable([]);
-  }
-
-  document.getElementById("session-log").innerHTML = "✅ Session deleted — gondola ID is free to reuse.";
-  loadSessionsList();
-  loadStatusOverview();
-}
 
 async function loadCountSheet() {
   const sessionId = document.getElementById("session-select").value;
