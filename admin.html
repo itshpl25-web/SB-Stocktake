@@ -156,6 +156,7 @@
       <select id="session-select"><option>Loading...</option></select>
       <button class="btn btn-admin" onclick="loadCountSheet()">Load Zone Count Report</button>
       <button class="btn btn-gray" onclick="printReport()">🖨️ Print</button>
+      <button class="btn btn-gray" style="background:#ea4335;color:white" onclick="deleteSingleSession()">🗑 Delete This Session</button>
       <div id="session-log"></div>
     </div>
 
@@ -824,7 +825,7 @@ function renderReconTable() {
     const barcode = currentReconBarcodeMap[r.material] || "";
     return "<tr><td>" + (r.phys_inventory_doc||"") + "</td><td>" + (r.item||"") + "</td><td>" + r.material + "</td><td>" + (r.description||"") + "</td>" +
       "<td>" + (r.batch||"") + "</td><td>" + (r.plant||"") + "</td><td>" + (r.storage_location||"") + "</td><td>" + (r.special_stock||"") + "</td><td>" + (r.count_date||"") + "</td>" +
-      "<td>" + r.qty_counted + "</td><td>" + (r.base_uom||"") + "</td><td>" + (r.book_quantity ?? 0) + "</td><td>" + r.zero_count + "</td><td>" + varianceCell + "</td><td>" + barcode + "</td>" +
+      "<td>" + r.qty_counted + "</td><td>" + (r.base_uom||"") + "</td><td>" + (r.book_quantity ?? 0) + "</td><td>" + r.zero_count + "</td><td>" + varianceCell + "</td><td class='trace-cell'>" + barcode + "</td>" +
       "<td class='trace-cell'>" + buildTraceSummary(rows) + "</td>" +
       "<td><button class='btn btn-gray' style='width:auto;padding:6px 10px;margin:0;font-size:11px' onclick=\"traceMaterial('" + r.material.replace(/'/g,"\\'") + "', '" + (r.description||"").replace(/'/g,"\\'") + "')\">🔍</button></td></tr>";
   }).join("");
@@ -915,27 +916,44 @@ async function loadReconciliation() {
     sb.rpc("department_scan_trace", { p_department_id: deptId, p_outlet_id: outletId })
   );
   currentReconTraceMap = {};
+  currentReconBarcodeMap = {};
+  const scannedBarcodesByMaterial = {}; // material -> Set of every distinct barcode actually scanned
   if (!traceErr && traceRows) {
     traceRows.forEach(function(r) {
       if (!currentReconTraceMap[r.material]) currentReconTraceMap[r.material] = [];
       currentReconTraceMap[r.material].push(r);
+      if (r.barcode) {
+        if (!scannedBarcodesByMaterial[r.material]) scannedBarcodesByMaterial[r.material] = new Set();
+        scannedBarcodesByMaterial[r.material].add(r.barcode);
+      }
+    });
+    // Show every distinct barcode actually scanned for a material — e.g. if one person scanned the
+    // EA barcode and another scanned the CAR barcode for the same material, both show, comma-separated.
+    // Showing only one would risk hiding real stock that was counted under the barcode not shown.
+    Object.keys(scannedBarcodesByMaterial).forEach(function(material) {
+      currentReconBarcodeMap[material] = Array.from(scannedBarcodesByMaterial[material]).join(", ");
     });
   }
 
-  // Barcode comes from products (master data), looked up only for the materials actually in this
-  // report — not the whole department. Fetching the entire department's catalog here silently broke
-  // once a department's product count passed Supabase's default 1000-row-per-request cap (e.g. TOYS,
-  // which has 11,371 product rows); scoping to just what's on screen avoids that entirely, since a
-  // single report's material count is comfortably under that limit. Chunked defensively anyway, in
-  // case a future department's report ever approaches that size.
-  const materialCodes = Array.from(new Set(data.map(function(r) { return r.material; })));
-  currentReconBarcodeMap = {};
-  const barcodeChunkSize = 300;
-  for (let i = 0; i < materialCodes.length; i += barcodeChunkSize) {
-    const chunk = materialCodes.slice(i, i + barcodeChunkSize);
-    const { data: productRows, error: prodErr } = await sb.from("products").select("barcode, material").eq("department_id", deptId).in("material", chunk);
+  // Fallback lookup, only for materials with zero scans (nothing in the trace to derive a barcode
+  // from) — a much smaller set than "every material in the report", so this stays cheap even for
+  // large departments. Prefers the numerator=1 (true EA) barcode as the most canonical representation
+  // when there's nothing actually scanned yet to go on.
+  const materialsNeedingFallback = data
+    .map(function(r) { return r.material; })
+    .filter(function(m) { return !currentReconBarcodeMap[m]; });
+  const uniqueFallbackMaterials = Array.from(new Set(materialsNeedingFallback));
+  const fallbackChunkSize = 300;
+  for (let i = 0; i < uniqueFallbackMaterials.length; i += fallbackChunkSize) {
+    const chunk = uniqueFallbackMaterials.slice(i, i + fallbackChunkSize);
+    const { data: productRows, error: prodErr } = await sb.from("products").select("barcode, material, numerator").eq("department_id", deptId).in("material", chunk);
     if (!prodErr && productRows) {
-      productRows.forEach(function(p) { currentReconBarcodeMap[p.material] = p.barcode; });
+      productRows.forEach(function(p) {
+        // Prefer numerator=1 (EA); otherwise just take the first one seen for that material.
+        if (!currentReconBarcodeMap[p.material] || Number(p.numerator) === 1) {
+          currentReconBarcodeMap[p.material] = p.barcode;
+        }
+      });
     }
   }
 
@@ -1100,6 +1118,41 @@ function renderSessionSelect(filterText) {
 }
 
 let currentReportSessionId = null;
+
+// Deletes exactly one gondola session (and its scan_items, via ON DELETE CASCADE) — the fix for a
+// gondola ID accidentally started under the wrong department and marked Done, which otherwise
+// permanently blocks reuse of that gondola_id at this outlet (UNIQUE(gondola_id, outlet_id) isn't
+// scoped by department). Unlike Clear Department Data, this touches exactly one row, nothing else.
+async function deleteSingleSession() {
+  const sessionId = document.getElementById("session-select").value;
+  if (!sessionId) { alert("No session selected."); return; }
+
+  const session = currentSessionListData.find(function(s) { return String(s.id) === String(sessionId); });
+  const label = session
+    ? session.gondola_id + " — " + (session.outlets ? session.outlets.name : "?") + " — " + (session.departments ? session.departments.name : "?") +
+      " (" + session.status.replace("_", " ").toUpperCase() + ", " + session.staff_name + ")"
+    : "session #" + sessionId;
+
+  const sure = confirm(
+    "Permanently delete this ONE session and all its scanned items?\n\n" + label +
+    "\n\nThis cannot be undone. The gondola ID becomes reusable again immediately after this — " +
+    "no other sessions or departments are affected."
+  );
+  if (!sure) return;
+
+  const { error } = await sb.from("gondola_sessions").delete().eq("id", sessionId);
+  if (error) { alert("❌ " + error.message); return; }
+
+  if (String(currentReportSessionId) === String(sessionId)) {
+    currentReportSessionId = null;
+    renderPrintTable([]);
+    renderEditTable([]);
+  }
+
+  document.getElementById("session-log").innerHTML = "✅ Session deleted — gondola ID is free to reuse.";
+  loadSessionsList();
+  loadStatusOverview();
+}
 
 async function loadCountSheet() {
   const sessionId = document.getElementById("session-select").value;
