@@ -184,6 +184,48 @@ th.num .thbtn{text-align:right}
 @keyframes tin{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
 @keyframes din{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}}
 
+/* drawer + modal internals */
+.dr-head{display:flex;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}
+.dr-head h2{font-size:26px;font-family:var(--f-mono);font-weight:600}
+.dr-body{padding:14px 18px;overflow:auto;flex:1}
+.dr-foot{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.modal-card{position:relative;z-index:1;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;box-shadow:var(--shadow);width:min(980px,100%);max-height:calc(100dvh - 32px);display:flex;flex-direction:column}
+.modal-h{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line)}
+.modal-h h2{font-size:20px}
+.modal-b{display:flex;flex-wrap:wrap;gap:20px;padding:18px;overflow:auto;background:var(--surface-2);min-height:120px}
+.modal-f{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;align-items:center;padding:12px 18px;border-top:1px solid var(--line)}
+.modal-f .sp{margin-right:auto}
+.pv-notes{flex:1 1 220px;min-width:0;font-size:13px}
+.pv-notes h3{font-size:16px;margin-bottom:6px}
+.pv-notes ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}
+
+/* A4 Zone Count Report sheet (fixed colours: it is paper, in both themes) */
+#print-area{display:none}
+.sheet{width:210mm;height:297mm;padding:12mm 12mm 10mm;background:var(--paper);color:var(--paper-ink);font:10pt/1.3 Arial,Helvetica,sans-serif;display:flex;flex-direction:column;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sheet h3{font-size:16pt;margin:0 0 2mm;font-family:inherit;font-weight:700}
+.sheet .meta{display:grid;grid-template-columns:1fr 1fr;gap:1mm 8mm;margin-bottom:4mm}
+.sheet .body{flex:1}
+.sheet table{width:100%;border-collapse:collapse;table-layout:fixed}
+.sheet th,.sheet td{border:.25mm solid var(--paper-line);padding:0 1.5mm;height:6.5mm;font-size:9.5pt;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.sheet th{background:#eeeeee;color:#141010;font-weight:700}
+.sheet .r{text-align:right}
+.sheet .c{text-align:center;color:#555555}
+.sheet .verify{display:flex;gap:8mm;border:.25mm solid var(--paper-line);padding:3mm 4mm;height:24mm;margin-bottom:4mm}
+.sheet .verify div{flex:1;display:flex;flex-direction:column;justify-content:space-between;font-size:9.5pt}
+.sheet .verify span{border-bottom:.3mm solid var(--paper-ink);display:block}
+.sheet .foot{text-align:right;font-weight:600;font-size:9.5pt;height:6mm}
+.sheet-row{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;flex:2 1 420px;min-width:0}
+.sheet-wrap{width:calc(210mm * .5);height:calc(297mm * .5);flex:none;background:var(--paper);box-shadow:0 2px 14px rgba(0,0,0,.25);overflow:hidden}
+.sheet-scale{width:210mm;height:297mm;transform:scale(.5);transform-origin:0 0}
+@media print{
+  @page{size:A4;margin:0}
+  html,body{background:#fff!important}
+  body > *:not(#print-area){display:none!important}
+  #print-area{display:block!important}
+  #print-area .sheet{break-after:page;page-break-after:always}
+  #print-area .sheet:last-child{break-after:auto;page-break-after:auto}
+}
+
 @media (max-width:1050px){.grid2{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:860px){
   .shell{grid-template-columns:minmax(0,1fr)}

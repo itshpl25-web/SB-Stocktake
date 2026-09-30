@@ -31,7 +31,10 @@
     clear: '<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/>',
     check: '<path d="M5 12l5 5 9-10"/>',
     alert: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.5"/>',
-    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.5"/>'
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.5"/>',
+    printer: '<path d="M7 9V3h10v6"/><rect x="4" y="9" width="16" height="8" rx="1"/><path d="M7 14h10v7H7z"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
+    x: '<path d="M6 6l12 12M18 6L6 18"/>'
   };
   function icon(name) {
     return '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">' + IC[name] + "</svg>";
@@ -107,6 +110,36 @@
       var s = requireScope(false);
       if (!filters || !Object.keys(filters).length) throw new ScopeError("Refusing to delete without a filter.");
       return applyFilters(sb.from(table).delete().eq("outlet_id", s.outletId), filters);
+    },
+
+    /* scan_items has no outlet_id column, so ownership is proven through the session:
+       every item read or write first confirms the gondola belongs to the selected outlet,
+       then also pins the item to that session id. */
+    assertSession: function (sessionId) {
+      var s = requireScope(false);
+      return Promise.resolve(
+        sb.from("gondola_sessions").select("id").eq("id", sessionId).eq("outlet_id", s.outletId).maybeSingle()
+      ).then(function (r) {
+        if (r.error) throw r.error;
+        if (!r.data) throw new ScopeError("That gondola does not belong to the selected outlet. Nothing was changed.");
+        return true;
+      });
+    },
+    scanItems: function (sessionId) {
+      return Scoped.assertSession(sessionId).then(function () {
+        return sb.from("scan_items").select("*").eq("session_id", sessionId).order("material");
+      });
+    },
+    updateScanQty: function (sessionId, itemId, qty) {
+      return Scoped.assertSession(sessionId).then(function () {
+        return sb.from("scan_items").update({ qty: qty, updated_at: new Date().toISOString() })
+          .eq("id", itemId).eq("session_id", sessionId).select().maybeSingle();
+      });
+    },
+    deleteScanItem: function (sessionId, itemId) {
+      return Scoped.assertSession(sessionId).then(function () {
+        return sb.from("scan_items").delete().eq("id", itemId).eq("session_id", sessionId).select().maybeSingle();
+      });
     }
   };
   function handleError(e) {
@@ -368,6 +401,13 @@
   document.addEventListener("change", function (e) {
     if (e.target.id === "g-outlet") setOutlet(e.target.value);
     else if (e.target.id === "g-dept") setDept(e.target.value);
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closeOverlays();
+  });
+  $("#scrim").addEventListener("click", closeOverlays);
+  $("#modal").addEventListener("click", function (e) {
+    if (e.target.id === "modal") closeOverlays();
   });
   window.addEventListener("hashchange", function () {
     var id = (location.hash || "").replace("#", "");
