@@ -85,14 +85,13 @@
   function load(silent) {
     var mine = S;
     if (!silent) { S.loading = true; S.error = null; renderTable(); }
-    return Promise.resolve(
-      Scoped.select("session_summary", "*").order("started_at", { ascending: false }).limit(1000)
-    ).then(function (r) {
+    return App.fetchAllPages(function (a, b) {
+      return Scoped.select("session_summary", "*").order("started_at", { ascending: false }).order("id").range(a, b);
+    }).then(function (rows) {
       if (mine !== S) return; // outlet changed while loading
-      if (r.error) throw r.error;
-      S.rows = r.data || [];
+      S.rows = rows;
       S.loaded = true; S.loading = false; S.error = null;
-      renderChips(); renderTable(); updateBadge(); renderCap();
+      renderChips(); renderTable(); updateBadge();
     }).catch(function (e) {
       if (mine !== S) return;
       S.loading = false;
@@ -107,24 +106,18 @@
     else delete App.badges.sessions;
     App.renderNav();
   }
-  function renderCap() {
-    var el = $("#s-cap");
-    if (el) el.innerHTML = S.rows.length >= 1000
-      ? '<div class="note warn" style="margin-bottom:16px">' + icon("alert") + "<span>Showing the latest 1000 sessions for this outlet.</span></div>" : "";
-  }
-
   /* ---------- page ---------- */
   function render(root) {
     root.innerHTML = App.pageHead("Sessions",
       "Every gondola for " + App.outletName() + " · " + (App.deptName() || "all departments") + ". Click a row to correct counts, or print from the row.") +
-      '<div id="s-cap"></div><section class="panel"><div class="toolbar">' +
+      '<section class="panel"><div class="toolbar">' +
       '<label class="search">' + icon("search") + '<input type="text" id="s-search" placeholder="Search gondola, staff, department" aria-label="Search sessions"></label>' +
       '<div class="chips" id="s-chips"></div>' +
       '<select id="s-print" class="sp" aria-label="Print status"><option value="all">All print states</option><option value="unprinted">Not printed</option><option value="printed">Printed</option></select>' +
       '</div><div class="tablewrap" id="s-table"></div></section>';
     $("#s-search").value = S.q;
     $("#s-print").value = S.pf;
-    renderChips(); renderTable(); renderCap();
+    renderChips(); renderTable();
     if (!S.loaded && !S.loading) load(false);
   }
   function renderChips() {

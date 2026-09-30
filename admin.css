@@ -184,6 +184,12 @@ th.num .thbtn{text-align:right}
 @keyframes tin{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
 @keyframes din{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}}
 
+/* reconciliation */
+.dt td.v-neg{color:var(--accent-strong);font-weight:600}
+.dt td.v-pos{color:var(--warn);font-weight:600}
+.dt td.more{text-align:center;color:var(--muted);padding:12px}
+.dt td.more .btn + .btn{margin-left:8px}
+
 /* drawer + modal internals */
 .dr-head{display:flex;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}
 .dr-head h2{font-size:26px;font-family:var(--f-mono);font-weight:600}

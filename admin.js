@@ -148,6 +148,21 @@
     toast("Something went wrong: " + ((e && e.message) || e), "err");
   }
 
+  /* Supabase caps a single request at 1000 rows and truncates silently, so every list that can
+     grow goes through this. makeQuery(from, to) must return a query with a stable order applied. */
+  function fetchAllPages(makeQuery) {
+    var PAGE = 1000, out = [];
+    function step(from) {
+      return Promise.resolve(makeQuery(from, from + PAGE - 1)).then(function (r) {
+        if (r.error) throw r.error;
+        var d = r.data || [];
+        out = out.concat(d);
+        return d.length === PAGE ? step(from + PAGE) : out;
+      });
+    }
+    return step(0);
+  }
+
   /* ---------- navigation ---------- */
   var NAV = [
     { id: "dashboard", label: "Dashboard", icon: "dash" },
@@ -426,6 +441,7 @@
 
   /* exposed for the later steps and for debugging in the browser console */
   App.sb = sb; App.Scoped = Scoped; App.toast = toast; App.esc = esc; App.icon = icon; App.pageHead = pageHead;
+  App.fetchAllPages = fetchAllPages;
   App.register = register; App.go = go; App.handleError = handleError; App.requireScope = requireScope;
   App.outletName = outletName; App.deptName = deptName; App.renderNav = renderNav; App.closeOverlays = closeOverlays;
   window.StockTakeAdmin = App;
