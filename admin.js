@@ -58,7 +58,8 @@
     outlets: [], depts: [],
     outletId: null, deptId: "",
     section: "dashboard", sections: {},
-    paused: false, lastRefresh: Date.now(), renderToken: 0
+    paused: false, lastRefresh: Date.now(), renderToken: 0,
+    busy: 0 // > 0 while a write is running: outlet and department are locked so the scope cannot change mid-write
   };
 
   function outletName() {
@@ -215,12 +216,13 @@
     os.innerHTML = (App.outletId === null ? '<option value="">Choose outlet…</option>' : "") +
       App.outlets.map(function (o) { return '<option value="' + esc(o.id) + '">' + esc(o.name) + "</option>"; }).join("");
     os.value = App.outletId === null ? "" : String(App.outletId);
+    os.disabled = App.busy > 0;
 
     var ds = $("#g-dept");
     ds.innerHTML = '<option value="">All departments</option>' +
       App.depts.map(function (d) { return '<option value="' + esc(d.id) + '">' + esc(d.name) + "</option>"; }).join("");
     ds.value = App.deptId === "" ? "" : String(App.deptId);
-    ds.disabled = App.outletId === null;
+    ds.disabled = App.outletId === null || App.busy > 0;
 
     $("#side-scope").innerHTML = App.outletId === null
       ? '<div class="k">Working on</div><div class="o">No outlet chosen</div>'
@@ -239,7 +241,34 @@
     });
     App.badges = {};
   }
+  /* Lock the scope bar while a write runs, so nothing can switch outlet or department half way through. */
+  function setBusy(on) {
+    App.busy = Math.max(0, App.busy + (on ? 1 : -1));
+    renderScope();
+    $("#shell").classList.toggle("busy", App.busy > 0);
+  }
+  window.addEventListener("beforeunload", function (e) {
+    if (App.busy > 0) { e.preventDefault(); e.returnValue = ""; }
+  });
+  /* Departments are shared reference data, so a new one must show up in every picker straight away. */
+  function refreshDepts() {
+    return Promise.resolve(sb.from("departments").select("id, name").order("name")).then(function (r) {
+      if (r.error) throw r.error;
+      App.depts = r.data || [];
+      renderScope();
+    });
+  }
+  /* After anything that changes data, every other section drops what it had loaded so it never shows stale numbers. */
+  function invalidateData(exceptId) {
+    Object.keys(App.sections).forEach(function (k) {
+      if (k !== exceptId && App.sections[k].reset) App.sections[k].reset();
+    });
+    App.badges = {};
+    renderNav();
+  }
+
   function setOutlet(idStr) {
+    if (App.busy > 0) { toast("A save is still running. Wait for it to finish before changing outlet.", "err"); renderScope(); return; }
     var o = App.outlets.find(function (x) { return String(x.id) === idStr; });
     var next = o ? o.id : null;
     if (next === App.outletId) return;
@@ -253,6 +282,7 @@
     if (o) toast("Now working on " + o.name + ".", "info");
   }
   function setDept(idStr) {
+    if (App.busy > 0) { toast("A save is still running. Wait for it to finish before changing department.", "err"); renderScope(); return; }
     App.deptId = idStr;
     closeOverlays();
     renderScope();
@@ -442,6 +472,7 @@
   /* exposed for the later steps and for debugging in the browser console */
   App.sb = sb; App.Scoped = Scoped; App.toast = toast; App.esc = esc; App.icon = icon; App.pageHead = pageHead;
   App.fetchAllPages = fetchAllPages;
+  App.setBusy = setBusy; App.refreshDepts = refreshDepts; App.invalidateData = invalidateData;
   App.register = register; App.go = go; App.handleError = handleError; App.requireScope = requireScope;
   App.outletName = outletName; App.deptName = deptName; App.renderNav = renderNav; App.closeOverlays = closeOverlays;
   window.StockTakeAdmin = App;
