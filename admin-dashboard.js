@@ -225,7 +225,7 @@
         : '<span class="chk auto' + (on ? " on" : "") + '" aria-hidden="true">' + (on ? icon("check") : "") + "</span>";
       var sub = s.manual ? (on && t.at ? "Ticked " + when(t.at) + ". " : "") + detail(s.id) : detail(s.id);
       return '<li class="step' + (on ? " done" : "") + '">' + control + '<div class="st"><b>' + (i + 1) + ". " + esc(s.label) + "</b>" +
-        '<span class="how">' + (s.manual ? "You tick this" : "Ticks itself") + "</span>" +
+        '<span class="how">' + (s.manual ? "Manual check required" : "Checked automatically") + "</span>" +
         (sub ? '<div class="sub">' + esc(sub) + "</div>" : "") +
         ws.map(function (w) { return '<div class="sub warnline">' + icon("alert") + esc(w.text) + "</div>"; }).join("") + "</div>" +
         '<button type="button" class="linkbtn" data-dx="goto" data-to="' + s.go + '">' + esc(s.goLabel) + "</button></li>";
