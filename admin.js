@@ -360,23 +360,16 @@
   /* ---------- section registry ---------- */
   function register(id, def) { App.sections[id] = def; }
 
-  function placeholder(title, step, points) {
-    return {
+  /* Every section registers itself from its own file. If one of those files fails to load, say so instead of showing a blank page. */
+  ["dashboard", "uploads", "sessions", "recon", "export", "clear"].forEach(function (id) {
+    register(id, {
       render: function (root) {
-        root.innerHTML = pageHead(title, "Step " + step + " of the overhaul. Not built yet.") +
-          '<section class="panel"><div class="panel-h"><h2>What will be here</h2></div><div class="panel-b"><ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px">' +
-          points.map(function (p) { return "<li>" + esc(p) + "</li>"; }).join("") + "</ul></div></section>";
+        var item = NAV.find(function (n) { return n.id === id; });
+        root.innerHTML = pageHead(item ? item.label : id) + '<div class="note err" style="max-width:640px">' + icon("alert") +
+          "<span>This section did not load. Check that all the admin files are uploaded next to admin.html, then reload the page.</span></div>";
       }
-    };
-  }
-
-  /* The real dashboard is registered by admin-dashboard.js; this stand-in only shows if that file is missing. */
-  register("dashboard", placeholder("Dashboard", 5, ["admin-dashboard.js did not load"]));
-  register("uploads", placeholder("Uploads", 4, ["MASTER LIST update (shared across outlets)", "MI24 upload for the selected outlet and department", "What is already on file per department"]));
-  register("sessions", placeholder("Sessions", 2, ["Search, filter and sort every gondola", "Detail panel to correct or delete counts", "Print button on each row, A4 report with Verified by box on the last page"]));
-  register("recon", placeholder("Reconciliation", 3, ["Book vs counted with a variance column", "Filters for variance, zero count and unmatched scans"]));
-  register("export", placeholder("Export", 4, ["Summary and preview, then download the .xlsx for SAP"]));
-  register("clear", placeholder("Clear", 4, ["Delete one outlet and department after the count, with the 4-character confirm code"]));
+    });
+  });
 
   /* ---------- boot ---------- */
   function init() {
