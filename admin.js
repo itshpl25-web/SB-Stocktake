@@ -102,6 +102,16 @@
       });
       return sb.from(table).insert(list);
     },
+    upsert: function (table, rows, onConflict) {
+      var s = requireScope(false);
+      var list = (Array.isArray(rows) ? rows : [rows]).map(function (r) {
+        if (r.outlet_id != null && String(r.outlet_id) !== String(s.outletId)) {
+          throw new ScopeError("A row belongs to a different outlet. Nothing was saved.");
+        }
+        return Object.assign({}, r, { outlet_id: s.outletId });
+      });
+      return sb.from(table).upsert(list, { onConflict: onConflict });
+    },
     update: function (table, values, filters) {
       var s = requireScope(false);
       if (!filters || !Object.keys(filters).length) throw new ScopeError("Refusing to update without a filter.");
@@ -360,49 +370,8 @@
     };
   }
 
-  /* Dashboard (step 1 version): connection and outlet scope check.
-     The real dashboard and checklist arrive in step 5. */
-  var dashRoot = null;
-  function countQuery(table, extra) {
-    var q = Scoped.select(table, "id", { count: "exact", head: true });
-    if (App.deptId) q = q.eq("department_id", App.deptId);
-    return extra ? extra(q) : q;
-  }
-  function loadScopeCheck() {
-    var root = dashRoot;
-    if (!root) return;
-    var token = App.renderToken;
-    var body = $("#sc-body", root);
-    Promise.all([
-      countQuery("gondola_sessions"),
-      countQuery("gondola_sessions", function (q) { return q.eq("status", "in_progress"); }),
-      countQuery("gondola_sessions", function (q) { return q.eq("status", "done"); }),
-      countQuery("sap_uploads")
-    ]).then(function (r) {
-      if (token !== App.renderToken || !body) return; // outlet or section changed while loading
-      var bad = r.find(function (x) { return x.error; });
-      if (bad) throw bad.error;
-      body.innerHTML = '<div class="tiles" style="margin-bottom:12px">' +
-        tile("Gondola sessions", r[0].count) + tile("In progress", r[1].count) + tile("Done", r[2].count) + tile("MI24 rows", r[3].count) + "</div>" +
-        '<div class="note ok">' + icon("check") + "<span>Connected. These counts come from " + esc(outletName()) + " only. No other outlet is queried.</span></div>";
-    }).catch(function (e) {
-      if (token !== App.renderToken || !body) return;
-      body.innerHTML = '<div class="note err">' + icon("alert") + "<span>Could not load counts: " + esc((e && e.message) || e) + "</span></div>";
-    });
-  }
-  function tile(k, v) { return '<div class="tile"><span class="k">' + esc(k) + '</span><span class="v">' + (v == null ? "—" : v) + "</span></div>"; }
-
-  register("dashboard", {
-    render: function (root) {
-      dashRoot = root;
-      root.innerHTML = pageHead("Dashboard", "Step 1 check: connection and outlet scope. The full dashboard and checklist arrive in step 5.") +
-        '<section class="panel"><div class="panel-h"><h2>' + esc(outletName()) + " · " + esc(deptName() || "All departments") +
-        '</h2><p>Switch outlet or department in the bar above and compare the numbers.</p></div><div class="panel-b" id="sc-body">Loading…</div></section>';
-      loadScopeCheck();
-    },
-    refresh: loadScopeCheck,
-    reset: function () { dashRoot = null; }
-  });
+  /* The real dashboard is registered by admin-dashboard.js; this stand-in only shows if that file is missing. */
+  register("dashboard", placeholder("Dashboard", 5, ["admin-dashboard.js did not load"]));
   register("uploads", placeholder("Uploads", 4, ["MASTER LIST update (shared across outlets)", "MI24 upload for the selected outlet and department", "What is already on file per department"]));
   register("sessions", placeholder("Sessions", 2, ["Search, filter and sort every gondola", "Detail panel to correct or delete counts", "Print button on each row, A4 report with Verified by box on the last page"]));
   register("recon", placeholder("Reconciliation", 3, ["Book vs counted with a variance column", "Filters for variance, zero count and unmatched scans"]));
@@ -472,8 +441,8 @@
   /* exposed for the later steps and for debugging in the browser console */
   App.sb = sb; App.Scoped = Scoped; App.toast = toast; App.esc = esc; App.icon = icon; App.pageHead = pageHead;
   App.fetchAllPages = fetchAllPages;
-  App.setBusy = setBusy; App.refreshDepts = refreshDepts; App.invalidateData = invalidateData;
   App.register = register; App.go = go; App.handleError = handleError; App.requireScope = requireScope;
   App.outletName = outletName; App.deptName = deptName; App.renderNav = renderNav; App.closeOverlays = closeOverlays;
+  App.setDept = setDept; App.setBusy = setBusy; App.refreshDepts = refreshDepts; App.invalidateData = invalidateData;
   window.StockTakeAdmin = App;
 })();

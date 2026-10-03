@@ -277,3 +277,33 @@ tr.sel td{background:var(--accent-soft)}
   .content{padding:16px}
   .live{margin-left:0}
 }
+
+/* ---------- dashboard + checklist (step 5) ---------- */
+.tile.warn{border-color:var(--warn);background:var(--warn-soft)}
+.tile.warn .v,.tile.warn .s{color:var(--warn)}
+.tile .v small{font-size:16px;font-weight:500;color:var(--muted)}
+.attn{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.attn li{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;background:var(--warn-soft);color:var(--warn);font-size:13px}
+.attn li.crit{background:var(--accent-soft);color:var(--accent-strong)}
+.attn li > span{flex:1}
+.attn li .ic{flex:none}
+.dots{display:inline-flex;gap:5px;vertical-align:middle}
+.dots i{width:10px;height:10px;border-radius:50%;background:var(--line-strong)}
+.dots i.on{background:var(--ok)}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.step{display:flex;align-items:flex-start;gap:14px;padding:12px 0;border-top:1px solid var(--line)}
+.step:first-child{border-top:0}
+.step .st{flex:1;min-width:0}
+.step .st b{font-weight:600}
+.step .how{margin-left:10px;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.step .sub{margin-top:2px;color:var(--muted);font-size:13px}
+.step .sub.warnline{color:var(--warn);display:flex;align-items:center;gap:6px;font-weight:500}
+.step .sub.warnline .ic{width:14px;height:14px}
+.chk{flex:none;width:24px;height:24px;border-radius:6px;border:2px solid var(--line-strong);background:var(--surface);display:inline-flex;align-items:center;justify-content:center;padding:0;color:var(--accent-fg)}
+.chk .ic{width:16px;height:16px;stroke-width:3}
+button.chk{cursor:pointer}
+button.chk:hover:not(:disabled){border-color:var(--accent)}
+button.chk[aria-checked="true"]{background:var(--ok);border-color:var(--ok)}
+button.chk:disabled{opacity:.6;cursor:default}
+.chk.auto{border-style:dashed}
+.chk.auto.on{background:var(--ok);border-color:var(--ok);border-style:solid}
