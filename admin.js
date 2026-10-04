@@ -112,6 +112,16 @@
       });
       return sb.from(table).upsert(list, { onConflict: onConflict });
     },
+    /* Database functions that take an outlet (such as department_scan_trace): the selected outlet is always passed in. */
+    rpc: function (name, args) {
+      var s = requireScope(false);
+      args = Object.assign({}, args);
+      if (args.p_outlet_id != null && String(args.p_outlet_id) !== String(s.outletId)) {
+        throw new ScopeError("That request is for a different outlet. Nothing was read.");
+      }
+      args.p_outlet_id = s.outletId;
+      return sb.rpc(name, args);
+    },
     update: function (table, values, filters) {
       var s = requireScope(false);
       if (!filters || !Object.keys(filters).length) throw new ScopeError("Refusing to update without a filter.");

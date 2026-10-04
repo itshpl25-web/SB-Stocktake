@@ -19,6 +19,48 @@
   var S = fresh();
   function curKey() { return String(App.outletId) + "|" + String(App.deptId); }
 
+  /* ---------- which departments of this outlet still hold data ---------- */
+  var OV = { key: null, rows: null, loading: false, error: null };
+  function loadOverview() {
+    var key = String(App.outletId), depts = App.depts.slice();
+    OV = { key: key, rows: null, loading: true, error: null };
+    var mine = OV;
+    paintOverview();
+    Promise.all(depts.map(function (d) {
+      return Promise.all([
+        Scoped.select("sap_uploads", "id", { count: "exact", head: true }).eq("department_id", d.id),
+        Scoped.select("gondola_sessions", "id", { count: "exact", head: true }).eq("department_id", d.id)
+      ]).then(function (r) {
+        var bad = r.find(function (x) { return x.error; });
+        if (bad) throw bad.error;
+        return { id: d.id, name: d.name, sap: r[0].count || 0, sessions: r[1].count || 0 };
+      });
+    })).then(function (rows) {
+      if (mine !== OV || key !== String(App.outletId)) return;
+      OV.rows = rows.filter(function (x) { return x.sap > 0 || x.sessions > 0; }).sort(function (a, b) { return (b.sap + b.sessions) - (a.sap + a.sessions); });
+      OV.loading = false; paintOverview();
+    }).catch(function (e) {
+      if (mine !== OV) return;
+      OV.loading = false; OV.error = (e && e.message) || String(e); paintOverview();
+    });
+  }
+  function paintOverview() {
+    var el = $("#c-ov"); if (!el) return;
+    if (OV.loading) { el.innerHTML = '<div class="empty">Checking which departments still have data…</div>'; return; }
+    if (OV.error) { el.innerHTML = '<div class="note err">' + icon("alert") + "<span>" + esc(OV.error) + ' <button type="button" class="btn sm" data-cc="ovreload" style="margin-left:8px">Retry</button></span></div>'; return; }
+    if (!OV.rows) return;
+    if (!OV.rows.length) { el.innerHTML = '<div class="note ok">' + icon("check") + "<span>No department has MI24 data or gondolas for " + esc(App.outletName()) + ".</span></div>"; return; }
+    el.innerHTML = '<p class="muted" style="margin:0 0 10px"><b>' + OV.rows.length + "</b> department" + (OV.rows.length === 1 ? " still has" : "s still have") + " data for " + esc(App.outletName()) + ". They may need clearing.</p>" +
+      '<div class="tablewrap"><table class="dt"><thead><tr><th class="plain">Department</th><th class="plain num">Gondolas</th><th class="plain num">MI24 rows</th><th class="plain"></th></tr></thead><tbody>' +
+      OV.rows.map(function (r) {
+        var sel = String(r.id) === String(App.deptId);
+        return '<tr class="' + (sel ? "sel" : "") + '"><td><b>' + esc(r.name) + '</b></td><td class="num">' + fmt(r.sessions) + '</td><td class="num">' + fmt(r.sap) + '</td><td class="act">' +
+          (sel ? '<span class="muted small">Selected</span>' : '<button type="button" class="btn sm" data-cc="pick" data-d="' + esc(r.id) + '">Select</button>') + "</td></tr>";
+      }).join("") + "</tbody></table></div>";
+  }
+  var OVPANEL = '<section class="panel" style="max-width:680px;margin-top:16px"><div class="panel-h"><h2>Departments still holding data</h2>' +
+    "<p>Every department of this outlet that still has gondolas or MI24 rows. Other outlets are not shown.</p></div><div class=\"panel-b\" id=\"c-ov\"></div></section>";
+
   /* ---------- what is on file ---------- */
   function load() {
     var mine = S, key = S.key, d = App.deptId;
@@ -79,13 +121,15 @@
     var head = App.pageHead("Clear", "Step 5. Deletes the gondola sessions, scanned items and MI24 data for one outlet and department. MASTER LIST products and every other outlet stay untouched.");
     if (!App.deptId) {
       root.innerHTML = head + '<section class="panel" style="max-width:680px"><div class="panel-b"><div class="note warn">' + icon("alert") +
-        "<span>Choose a department in the bar above. Clear always works on one outlet and one department.</span></div></div></section>";
+        "<span>Choose a department in the bar above. Clear always works on one outlet and one department.</span></div></div></section>" + OVPANEL;
+      paintOverview(); if (OV.key !== String(App.outletId)) loadOverview();
       return;
     }
     if (S.key !== curKey()) { S = fresh(); S.key = curKey(); S.code = genCode(); }
     root.innerHTML = head + '<section class="panel" style="max-width:680px"><div class="panel-h"><h2>' + esc(App.outletName()) + " · " + esc(App.deptName()) +
-      '</h2></div><div class="panel-b" id="c-body"></div></section>';
+      '</h2></div><div class="panel-b" id="c-body"></div></section>' + OVPANEL;
     paint();
+    paintOverview(); if (OV.key !== String(App.outletId)) loadOverview();
     if (!S.info && !S.loading && !S.error) load();
   }
   function paint() {
@@ -172,6 +216,7 @@
       App.invalidateData("clear");
       if (typeof App.onCleared === "function") { try { App.onCleared(o, d); } catch (x) { /* the clear itself is already done */ } }
       if (mine === S) { S.info = null; load(); }
+      loadOverview();
     });
   }
 
@@ -184,12 +229,14 @@
     var a = t.dataset.cc;
     if (a === "clear") doClear();
     else if (a === "reload") { S.key = curKey(); load(); }
+    else if (a === "ovreload") loadOverview();
+    else if (a === "pick") App.setDept(t.dataset.d);
     else if (a === "export") App.go("export");
   });
 
   App.register("clear", {
     render: render,
-    reset: function () { S = fresh(); },
+    reset: function () { S = fresh(); OV = { key: null, rows: null, loading: false, error: null }; },
     _test: { genCode: genCode, CODE_CHARS: CODE_CHARS }
   });
 })();

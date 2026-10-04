@@ -197,7 +197,8 @@
       '<div class="muted" style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">' + esc(r.staff_name || "") + " " + statusPill(r) + "</div></div>" +
       '<button type="button" class="icon-btn" data-sx="closeAll" aria-label="Close">' + icon("x") + "</button></div>" +
       '<div class="dr-body"><p class="muted small" style="margin:0 0 10px">Correct a quantity after re-counting. Reconciliation reflects the change straight away.</p>' + body + "</div>" +
-      '<div class="dr-foot"><button type="button" class="btn btn-ghost sm" data-sx="reloadItems">Reload items</button><span style="flex:1"></span>' +
+      '<div class="dr-foot"><button type="button" class="btn btn-ghost sm" data-sx="reloadItems">Reload items</button>' +
+      '<button type="button" class="btn sm danger" data-sx="delSession" data-id="' + esc(r.id) + '" title="Delete this one gondola and its scanned items">' + icon("clear") + 'Delete gondola</button><span style="flex:1"></span>' +
       '<button type="button" class="btn" data-sx="closeAll">Close</button>' +
       '<button type="button" class="btn btn-primary" data-sx="print" data-id="' + esc(r.id) + '">' + icon("printer") + "Print report</button></div>";
   }
@@ -230,6 +231,28 @@
       var r = findRow(sessionId); if (r) r.item_count = S.items.length;
       renderDrawer(); renderTable();
       toast("Item deleted.");
+    }).catch(App.handleError);
+  }
+
+  /* Deletes exactly one gondola (its scanned items go with it). The fix for a gondola ID started under the wrong
+     department: the ID is unique per outlet, so a wrong one blocks the ID until it is deleted. */
+  function deleteSession(id) {
+    var r = findRow(id);
+    if (!r) { toast("That gondola is not in the list for this outlet.", "err"); return; }
+    var label = r.gondola_id + " · " + r.outlet + " · " + r.department + " (" + (r.status === "done" ? "done" : "in progress") + ", " + (r.staff_name || "no staff name") + ", " + r.item_count + " item" + (Number(r.item_count) === 1 ? "" : "s") + ")";
+    var warnOpen = r.status === "in_progress" ? "\n\nThis gondola is still IN PROGRESS: staff may still be counting on it." : "";
+    if (!window.confirm("Permanently delete this ONE gondola and all its scanned items?\n\n" + label + warnOpen +
+      "\n\nThis cannot be undone. The gondola ID can be used again straight away. No other gondolas or departments are affected.")) return;
+    var mine = S;
+    Promise.resolve(Scoped.remove("gondola_sessions", { id: r.id }).select()).then(function (res) {
+      if (res.error) throw res.error;
+      if (mine !== S) return;
+      var gone = res.data && res.data.length;
+      S.rows = S.rows.filter(function (x) { return sid(x.id) !== sid(r.id); });
+      App.closeOverlays();
+      renderChips(); renderTable(); updateBadge();
+      App.invalidateData("sessions");
+      toast(gone ? "Gondola " + r.gondola_id + " deleted. The ID is free to use again." : "That gondola was already gone.", gone ? "ok" : "info");
     }).catch(App.handleError);
   }
 
@@ -353,6 +376,7 @@
     saveQty: function (d) { saveQty(d.id); },
     delItem: function (d, el) { deleteItem(d.id, el); },
     reloadItems: function () { loadItems(); },
+    delSession: function (d) { deleteSession(d.id); },
     doPrint: doPrint
   };
   document.addEventListener("click", function (e) {

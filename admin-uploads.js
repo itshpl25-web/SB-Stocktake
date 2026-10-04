@@ -19,7 +19,8 @@
     { k: "material", label: "Material", req: true, legacy: 2, alias: ["material", "materialnumber", "materialno", "articlenumber", "article"] },
     { k: "description", label: "Description", req: true, legacy: 3, alias: ["materialdescription", "description", "articledescription", "desc"] },
     { k: "material_group", label: "Material group", req: false, legacy: 37, alias: ["materialgroup", "matlgroup", "matgroup"] },
-    { k: "uom", label: "UOM (pack unit)", req: true, legacy: 7, alias: ["alternativeunitofmeasure", "alternateunitofmeasure", "altuom", "alternativeuom", "aun", "unitofmeasure", "uom", "baseunitofmeasure", "baseuom"], prefix: ["alternativeunit"] },
+    // "Sales unit" is what the old page read (column H). It must come before any "base unit" name, which is always EA.
+    { k: "uom", label: "UOM (sales unit)", req: true, legacy: 7, alias: ["salesunit", "salesuom", "alternativeunitofmeasure", "alternateunitofmeasure", "altuom", "alternativeuom", "aun", "unitofmeasure", "uom", "baseunitofmeasure", "baseuom"], prefix: ["alternativeunit"] },
     { k: "numerator", label: "Numerator", req: true, legacy: 8, alias: ["numerator", "counter"], prefix: ["numeratorfor", "numerator"] }
   ];
   var SAP_FIELDS = [
@@ -114,7 +115,7 @@
   function cell(row, sel, k) { var i = sel[k]; return i === "" || i == null ? "" : row[Number(i)]; }
 
   function parseMaster(M) {
-    var out = { rows: [], blockers: [], warns: [], skipped: 0, dups: 0 };
+    var out = { rows: [], blockers: [], warns: [], infos: [], skipped: 0, dups: 0, conflicts: 0 };
     MASTER_FIELDS.forEach(function (f) { if (f.req && M.sel[f.k] === "") out.blockers.push("Choose the column for " + f.label + "."); });
     if (out.blockers.length) return out;
     var seen = {}, badNum = 0, numericUom = 0, emptyUom = 0;
@@ -125,16 +126,23 @@
       if (!(n > 0)) { n = 1; badNum++; }
       var uom = str(cell(row, M.sel, "uom"));
       if (!uom) emptyUom++; else if (/^[\d.,\-\s]+$/.test(uom)) numericUom++;
-      if (seen[barcode]) out.dups++;
-      seen[barcode] = { barcode: barcode, material: str(cell(row, M.sel, "material")), description: str(cell(row, M.sel, "description")),
+      var rec = { barcode: barcode, material: str(cell(row, M.sel, "material")), description: str(cell(row, M.sel, "description")),
         material_group: str(cell(row, M.sel, "material_group")), uom: uom, numerator: n };
+      var prev = seen[barcode];
+      if (prev) {
+        out.dups++;
+        // the same item listed once per plant is normal; only copies that disagree are worth a warning
+        if (prev.material !== rec.material || prev.description !== rec.description || prev.uom !== rec.uom || prev.numerator !== rec.numerator || prev.material_group !== rec.material_group) out.conflicts++;
+      }
+      seen[barcode] = rec;
     }
     out.rows = Object.keys(seen).map(function (k) { return seen[k]; });
     var total = out.rows.length || 1;
     if (numericUom / total > 0.2) out.blockers.push("The UOM column (" + hdr(M, "uom") + ") is mostly numbers. That looks like the wrong column, for example a cost. Pick the right one.");
     if (emptyUom / total > 0.5) out.warns.push("More than half of the rows have an empty UOM (" + hdr(M, "uom") + "). Check the column.");
     if (badNum) out.warns.push(badNum + " row(s) have no usable numerator and will be saved with numerator 1.");
-    if (out.dups) out.warns.push(out.dups + " barcode(s) appear more than once in the file. The last occurrence is used.");
+    if (out.conflicts) out.warns.push(out.conflicts + " barcode(s) appear more than once with DIFFERENT details (material, description, unit or numerator). The last occurrence is used.");
+    if (out.dups - out.conflicts > 0) out.infos.push((out.dups - out.conflicts) + " repeated barcode(s) are identical copies (for example the same item listed for two plants). Each is saved once.");
     if (out.skipped) out.warns.push(out.skipped + " row(s) with no barcode are skipped.");
     if (!out.rows.length) out.blockers.push("No rows with a barcode were found.");
     return out;
@@ -272,6 +280,7 @@
     var h = "";
     P.blockers.forEach(function (b) { h += '<div class="note err" style="margin-bottom:8px">' + icon("alert") + "<span>" + esc(b) + "</span></div>"; });
     P.warns.forEach(function (b) { h += '<div class="note warn" style="margin-bottom:8px">' + icon("alert") + "<span>" + esc(b) + "</span></div>"; });
+    (P.infos || []).forEach(function (b) { h += '<div class="note" style="margin-bottom:8px">' + icon("info") + "<span>" + esc(b) + "</span></div>"; });
     if (P.rows.length) {
       h += '<p class="muted small" style="margin:10px 0 6px"><b>' + fmt(P.rows.length) + "</b> rows ready. First rows as they will be saved:</p>";
       h += kind === "m"
@@ -338,6 +347,7 @@
       '<div class="note warn" style="margin-bottom:14px">' + icon("alert") + "<span><b>Shared by every outlet.</b> Products have no outlet, so updating the MASTER LIST changes product details for all outlets, not only " + esc(App.outletName()) + ".</span></div>" +
       '<div class="grid2f"><label class="field"><span>Department for this file</span><select id="m-dept">' + deptOpts + "</select></label>" +
       '<label class="field" id="m-new-wrap" hidden><span>New department name</span><input type="text" id="m-newdept" placeholder="e.g. FROZEN" autocomplete="off" style="text-transform:uppercase"></label></div>' +
+      '<div id="m-last" class="muted small" style="margin:-4px 0 12px" aria-live="polite"></div>' +
       dropZone("m") + '<div id="m-map"></div><div id="m-info"></div>' +
       '<div class="actions"><button type="button" class="btn btn-primary" id="m-go" data-up="go-m" disabled>Update MASTER LIST</button></div>' +
       '<div class="prog" id="m-prog" hidden><i></i></div><div class="log" id="m-log" hidden></div></div></section>' +
@@ -368,6 +378,21 @@
       ? '<div class="note" style="margin-bottom:12px">' + icon("info") + "<span><b>" + fmt(row.sap) + "</b> MI24 rows are on file for " + esc(App.deptName()) + " (count date " + esc(row.date || "unknown") + "). Uploading replaces them.</span></div>" : "";
   }
 
+  function stampOf(iso) {
+    if (!iso) return "";
+    var d = new Date(iso); if (isNaN(d.getTime())) return "";
+    return d.toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+  /* "Last updated" line under the MASTER LIST department picker (read from the Data on file numbers). */
+  function paintMasterLast() {
+    var el = $("#m-last"); if (!el) return;
+    var pick = UM.dept == null ? String(App.deptId || "") : UM.dept;
+    if (!pick || pick === "__new__") { el.textContent = ""; return; }
+    if (!OF.loaded) { el.textContent = "Checking the last update…"; return; }
+    var row = OF.rows.find(function (r) { return String(r.id) === String(pick); });
+    el.textContent = row && row.upd ? "MASTER LIST last updated: " + stampOf(row.upd) + " (" + fmt(row.master) + (row.master === 1 ? " product)" : " products)") : "No MASTER LIST has been uploaded for this department yet.";
+  }
+
   /* ---------- data on file ---------- */
   function loadOnFile() {
     var key = String(App.outletId), depts = App.depts.slice(), mine = ++token;
@@ -378,11 +403,12 @@
         sb.from("products").select("barcode", { count: "exact", head: true }).eq("department_id", d.id),
         Scoped.select("sap_uploads", "id", { count: "exact", head: true }).eq("department_id", d.id),
         Scoped.select("sap_uploads", "count_date").eq("department_id", d.id).limit(1),
-        Scoped.select("gondola_sessions", "id", { count: "exact", head: true }).eq("department_id", d.id)
+        Scoped.select("gondola_sessions", "id", { count: "exact", head: true }).eq("department_id", d.id),
+        sb.from("products").select("updated_at").eq("department_id", d.id).order("updated_at", { ascending: false }).limit(1)
       ]).then(function (r) {
         var bad = r.find(function (x) { return x.error; });
         if (bad) throw bad.error;
-        return { id: d.id, name: d.name, master: r[0].count || 0, sap: r[1].count || 0, date: r[2].data && r[2].data[0] ? r[2].data[0].count_date : "", sessions: r[3].count || 0 };
+        return { id: d.id, name: d.name, master: r[0].count || 0, sap: r[1].count || 0, date: r[2].data && r[2].data[0] ? r[2].data[0].count_date : "", sessions: r[3].count || 0, upd: r[4].data && r[4].data[0] ? r[4].data[0].updated_at : "" };
       });
     })).then(function (rows) {
       if (mine !== token || key !== String(App.outletId)) return;
@@ -395,13 +421,14 @@
     });
   }
   function paintOnFile() {
+    paintMasterLast();
     var el = $("#of-table"); if (!el) return;
     if (OF.loading && !OF.loaded) { el.innerHTML = '<div class="empty">Loading…</div>'; return; }
     if (OF.error && !OF.loaded) { el.innerHTML = '<div class="empty">Could not load: ' + esc(OF.error) + ' <button type="button" class="btn sm" data-up="reload">Retry</button></div>'; return; }
-    el.innerHTML = '<table class="dt"><thead><tr><th class="plain">Department</th><th class="plain num">MASTER items</th><th class="plain num">MI24 rows</th><th class="plain">MI24 count date</th><th class="plain num">Gondolas</th><th class="plain">Status</th></tr></thead><tbody>' +
+    el.innerHTML = '<table class="dt"><thead><tr><th class="plain">Department</th><th class="plain num">MASTER items</th><th class="plain">MASTER updated</th><th class="plain num">MI24 rows</th><th class="plain">MI24 count date</th><th class="plain num">Gondolas</th><th class="plain">Status</th></tr></thead><tbody>' +
       OF.rows.map(function (r) {
         var st = r.sap > 0 ? '<span class="pill ok"><i></i>MI24 loaded</span>' : (r.sessions > 0 ? '<span class="pill warn"><i></i>Scans but no MI24</span>' : '<span class="pill info"><i></i>Nothing loaded</span>');
-        return '<tr class="' + (String(r.id) === String(App.deptId) ? "sel" : "") + '"><td>' + esc(r.name) + '</td><td class="num">' + fmt(r.master) + '</td><td class="num">' + fmt(r.sap) + "</td><td>" + esc(r.date || "—") + '</td><td class="num">' + fmt(r.sessions) + "</td><td>" + st + "</td></tr>";
+        return '<tr class="' + (String(r.id) === String(App.deptId) ? "sel" : "") + '"><td>' + esc(r.name) + '</td><td class="num">' + fmt(r.master) + "</td><td>" + esc(stampOf(r.upd) || "—") + '</td><td class="num">' + fmt(r.sap) + "</td><td>" + esc(r.date || "—") + '</td><td class="num">' + fmt(r.sessions) + "</td><td>" + st + "</td></tr>";
       }).join("") + "</tbody></table>";
   }
 
@@ -516,7 +543,7 @@
       if (t.dataset.upMap === "m") ensureExisting();
       return;
     }
-    if (t.id === "m-dept") { UM.dept = t.value; $("#m-new-wrap").hidden = t.value !== "__new__"; paintInfo("m"); }
+    if (t.id === "m-dept") { UM.dept = t.value; $("#m-new-wrap").hidden = t.value !== "__new__"; paintInfo("m"); paintMasterLast(); }
     else if (t.id === "s-date") { US.date = t.value; paintBtn("s"); }
   });
   document.addEventListener("input", function (e) {

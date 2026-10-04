@@ -307,3 +307,8 @@ button.chk[aria-checked="true"]{background:var(--ok);border-color:var(--ok)}
 button.chk:disabled{opacity:.6;cursor:default}
 .chk.auto{border-style:dashed}
 .chk.auto.on{background:var(--ok);border-color:var(--ok);border-style:solid}
+
+/* gondola trace (reconciliation) */
+.dt td.tracecell{max-width:260px;font-size:12px;color:var(--muted);white-space:normal;word-break:break-word}
+.dt td.small{font-size:12px}
+.btn.on,.btn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong)}
